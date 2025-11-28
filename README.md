@@ -63,7 +63,7 @@ Los archivos `.txt` deben tener el formato:
 
 ## 🎨 Capturas
 
-_(Añade capturas de pantalla aquí)_
+<img width="1918" height="1025" alt="image (7)" src="https://github.com/user-attachments/assets/bf061448-76a2-4f33-a727-a64b9d5a6d25" />
 
 ## 📄 Licencia
 
