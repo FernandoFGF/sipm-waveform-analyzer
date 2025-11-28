@@ -1,15 +1,17 @@
 """
-Popup windows for temporal distribution and all waveforms visualization.
+Temporal distribution analysis window.
 """
 import customtkinter as ctk
 import tkinter as tk
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import numpy as np
 
-from config import WINDOW_TIME, SAMPLE_TIME, COLOR_WAVEFORM_OVERLAY
+from config import WINDOW_TIME, SAMPLE_TIME
 from utils import get_config, ResultsExporter
-
+from utils.plotting import save_figure
+from utils.signal_processing import SiPMAnalyzer
+from views.popups.base_popup import BasePopup
 
 def show_temporal_distribution(parent, accepted_results, afterpulse_results):
     """
@@ -23,16 +25,11 @@ def show_temporal_distribution(parent, accepted_results, afterpulse_results):
     if not accepted_results:
         return
     
-    # Import SiPM analyzer
-    from models.sipm_analyzer import SiPMAnalyzer
-    
     # Create window
-    top = ctk.CTkToplevel(parent)
-    top.title("Distribución Temporal Global - Análisis SiPM")
-    top.geometry("1200x700")
+    window = BasePopup(parent, "Distribución Temporal Global - Análisis SiPM", 1200, 700)
     
     # Create main frame with two columns
-    main_frame = ctk.CTkFrame(top)
+    main_frame = ctk.CTkFrame(window)
     main_frame.pack(fill="both", expand=True, padx=10, pady=10)
     main_frame.grid_columnconfigure(0, weight=3)
     main_frame.grid_columnconfigure(1, weight=1)
@@ -65,7 +62,7 @@ def show_temporal_distribution(parent, accepted_results, afterpulse_results):
     
     if len(all_global_peaks) < 2:
         print("No hay suficientes picos para generar la distribución.")
-        top.destroy()
+        window.destroy()
         return
     
     # Sort by global time
@@ -81,72 +78,6 @@ def show_temporal_distribution(parent, accepted_results, afterpulse_results):
     # Variables to store current canvas and metrics widgets
     canvas_ref = {'canvas': None, 'fig': None}
     metrics_widgets = {'widgets': [], 'metrics': None}  # Store metrics object
-    
-    def update_plot(amp_threshold, time_threshold):
-        """Update plot and metrics with new thresholds."""
-        # Perform SiPM analysis with new thresholds
-        analyzer = SiPMAnalyzer(amplitude_threshold_mV=amp_threshold, 
-                               time_threshold_s=time_threshold)
-        metrics = analyzer.analyze(diffs, amps_plot)
-        
-        # Store metrics for export
-        metrics_widgets['metrics'] = metrics
-        
-        # Clear previous plot if exists
-        if canvas_ref['canvas'] is not None:
-            canvas_ref['canvas'].get_tk_widget().destroy()
-        
-        # Create new plot
-        fig = plt.Figure(figsize=(8, 6), dpi=100)
-        ax = fig.add_subplot(111)
-        
-        # Plot points colored by region
-        # DCR (bottom-right) - blue
-        if metrics.dcr_mask is not None and np.any(metrics.dcr_mask):
-            ax.scatter(diffs[metrics.dcr_mask], amps_plot[metrics.dcr_mask], 
-                      alpha=0.6, s=15, c='#1f77b4', label='DCR', edgecolors='none')
-        
-        # Afterpulses (bottom-left) - green
-        if metrics.afterpulse_mask is not None and np.any(metrics.afterpulse_mask):
-            ax.scatter(diffs[metrics.afterpulse_mask], amps_plot[metrics.afterpulse_mask],
-                      alpha=0.6, s=15, c='#2ecc71', label='Afterpulses', edgecolors='none')
-        
-        # Crosstalk (top-right) - red
-        if metrics.crosstalk_mask is not None and np.any(metrics.crosstalk_mask):
-            ax.scatter(diffs[metrics.crosstalk_mask], amps_plot[metrics.crosstalk_mask],
-                      alpha=0.6, s=15, c='#e74c3c', label='Crosstalk', edgecolors='none')
-        
-        # AP + XT (top-left) - orange
-        if metrics.crosstalk_afterpulse_mask is not None and np.any(metrics.crosstalk_afterpulse_mask):
-            ax.scatter(diffs[metrics.crosstalk_afterpulse_mask], amps_plot[metrics.crosstalk_afterpulse_mask],
-                      alpha=0.6, s=15, c='#ff9500', label='AP + XT', edgecolors='none')
-        
-        # Draw threshold lines
-        # Horizontal line (amplitude threshold)
-        ax.axhline(y=metrics.amplitude_threshold, color='red', linestyle='--', 
-                  linewidth=2, label=f'Threshold Amp: {metrics.amplitude_threshold:.1f} mV')
-        
-        # Vertical line (time threshold)
-        ax.axvline(x=metrics.time_threshold, color='purple', linestyle='--',
-                  linewidth=2, label=f'Threshold Time: {metrics.time_threshold*1e6:.1f} µs')
-        
-        ax.set_xscale('log')
-        ax.set_xlabel("Diferencia Temporal entre Picos Consecutivos (s) [Log]", fontsize=10)
-        ax.set_ylabel("Amplitud del pico (mV)", fontsize=10)
-        ax.set_title("Amplitud vs Delta T (Global) - Análisis SiPM", fontsize=12, weight='bold')
-        ax.grid(True, which="both", ls="-", alpha=0.2)
-        ax.legend(loc='upper right', fontsize=8)
-        
-        canvas = FigureCanvasTkAgg(fig, master=plot_frame)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True)
-        
-        # Store references
-        canvas_ref['canvas'] = canvas
-        canvas_ref['fig'] = fig
-        
-        # Update metrics display
-        update_metrics_display(metrics)
     
     def update_metrics_display(metrics):
         """Update the metrics panel with new values."""
@@ -284,6 +215,89 @@ def show_temporal_distribution(parent, accepted_results, afterpulse_results):
                                       font=ctk.CTkFont(size=10))
         dcr_count_label.pack(pady=(5, 10))
 
+    def update_plot(amp_threshold, time_threshold):
+        """Update plot and metrics with new thresholds."""
+        # Perform SiPM analysis with new thresholds
+        analyzer = SiPMAnalyzer(amplitude_threshold_mV=amp_threshold, 
+                               time_threshold_s=time_threshold)
+        metrics = analyzer.analyze(diffs, amps_plot)
+        
+        # Store metrics for export
+        metrics_widgets['metrics'] = metrics
+        
+        # Clear previous plot if exists
+        if canvas_ref['canvas'] is not None:
+            canvas_ref['canvas'].get_tk_widget().destroy()
+        
+        # Create new plot
+        fig = plt.Figure(figsize=(8, 6), dpi=100)
+        ax = fig.add_subplot(111)
+        
+        # Plot points colored by region
+        # DCR (bottom-right) - blue
+        if metrics.dcr_mask is not None and np.any(metrics.dcr_mask):
+            ax.scatter(diffs[metrics.dcr_mask], amps_plot[metrics.dcr_mask], 
+                      alpha=0.6, s=15, c='#1f77b4', label='DCR', edgecolors='none')
+        
+        # Afterpulses (bottom-left) - green
+        if metrics.afterpulse_mask is not None and np.any(metrics.afterpulse_mask):
+            ax.scatter(diffs[metrics.afterpulse_mask], amps_plot[metrics.afterpulse_mask],
+                      alpha=0.6, s=15, c='#2ecc71', label='Afterpulses', edgecolors='none')
+        
+        # Crosstalk (top-right) - red
+        if metrics.crosstalk_mask is not None and np.any(metrics.crosstalk_mask):
+            ax.scatter(diffs[metrics.crosstalk_mask], amps_plot[metrics.crosstalk_mask],
+                      alpha=0.6, s=15, c='#e74c3c', label='Crosstalk', edgecolors='none')
+        
+        # AP + XT (top-left) - orange
+        if metrics.crosstalk_afterpulse_mask is not None and np.any(metrics.crosstalk_afterpulse_mask):
+            ax.scatter(diffs[metrics.crosstalk_afterpulse_mask], amps_plot[metrics.crosstalk_afterpulse_mask],
+                      alpha=0.6, s=15, c='#ff9500', label='AP + XT', edgecolors='none')
+        
+        # Draw threshold lines
+        # Horizontal line (amplitude threshold)
+        ax.axhline(y=metrics.amplitude_threshold, color='red', linestyle='--', 
+                  linewidth=2, label=f'Threshold Amp: {metrics.amplitude_threshold:.1f} mV')
+        
+        # Vertical line (time threshold)
+        ax.axvline(x=metrics.time_threshold, color='purple', linestyle='--',
+                  linewidth=2, label=f'Threshold Time: {metrics.time_threshold*1e6:.1f} µs')
+        
+        ax.set_xscale('log')
+        ax.set_xlabel("Diferencia Temporal entre Picos Consecutivos (s) [Log]", fontsize=10)
+        ax.set_ylabel("Amplitud del pico (mV)", fontsize=10)
+        ax.set_title("Amplitud vs Delta T (Global) - Análisis SiPM", fontsize=12, weight='bold')
+        ax.grid(True, which="both", ls="-", alpha=0.2)
+        ax.legend(loc='upper right', fontsize=8)
+        
+        canvas = FigureCanvasTkAgg(fig, master=plot_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+        
+        # Store references
+        canvas_ref['canvas'] = canvas
+        canvas_ref['fig'] = fig
+        
+        # Setup context menu for this plot
+        context_menu = tk.Menu(window, tearoff=0)
+        
+        def save_plot(fmt):
+            save_figure(fig, default_prefix="temporal_dist")
+
+        context_menu.add_command(label="💾 Guardar como PNG", command=lambda: save_plot("png"))
+        context_menu.add_command(label="💾 Guardar como PDF", command=lambda: save_plot("pdf"))
+        context_menu.add_command(label="💾 Guardar como SVG", command=lambda: save_plot("svg"))
+        
+        def show_context_menu(event):
+            try:
+                context_menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                context_menu.grab_release()
+                
+        canvas.get_tk_widget().bind("<Button-3>", show_context_menu)
+        
+        # Update metrics display
+        update_metrics_display(metrics)
     
     def on_update_button():
         """Handle update button click."""
@@ -306,7 +320,7 @@ def show_temporal_distribution(parent, accepted_results, afterpulse_results):
             # Visual feedback
             original_text = save_config_btn.cget("text")
             save_config_btn.configure(text="✓ Guardado!")
-            top.after(2000, lambda: save_config_btn.configure(text=original_text))
+            window.after(2000, lambda: save_config_btn.configure(text=original_text))
         except ValueError:
             print("Error: Valores inválidos")
     
@@ -398,10 +412,10 @@ def show_temporal_distribution(parent, accepted_results, afterpulse_results):
             return
         
         # Create custom dialog for format selection
-        export_dialog = ctk.CTkToplevel(top)
+        export_dialog = ctk.CTkToplevel(window)
         export_dialog.title("Exportar Métricas SiPM")
         export_dialog.geometry("300x150")
-        export_dialog.transient(top)
+        export_dialog.transient(window)
         export_dialog.grab_set()
         
         # Center the dialog
@@ -455,7 +469,7 @@ def show_temporal_distribution(parent, accepted_results, afterpulse_results):
         json_btn.pack(side="left", padx=10)
         
         # Wait for dialog
-        top.wait_window(export_dialog)
+        window.wait_window(export_dialog)
         
         if not selected_format[0]:
             return
@@ -518,121 +532,3 @@ def show_temporal_distribution(parent, accepted_results, afterpulse_results):
     
     # Initial plot with default thresholds
     update_plot(60.0, 1e-4)
-    
-    # Ensure window stays on top
-    top.after(100, lambda: top.lift())
-    top.after(100, lambda: top.focus_force())
-
-
-def show_all_waveforms(parent, waveform_files, global_min_amp, global_max_amp):
-    """
-    Show all waveforms overlaid.
-    
-    Args:
-        parent: Parent window
-        waveform_files: List of waveform file paths
-        global_min_amp: Global minimum amplitude
-        global_max_amp: Global maximum amplitude
-    """
-    if not waveform_files:
-        print("No hay archivos cargados.")
-        return
-    
-    # Create window
-    top = ctk.CTkToplevel(parent)
-    top.title("Todas las Waveforms")
-    top.geometry("1200x800")
-    
-    # Create frame for plot and toolbar
-    plot_frame = ctk.CTkFrame(top)
-    plot_frame.pack(fill="both", expand=True, padx=10, pady=10)
-    
-    # Create plot
-    fig = plt.Figure(figsize=(12, 8), dpi=100)
-    ax = fig.add_subplot(111)
-    fig.subplots_adjust(left=0.08, right=0.98, top=0.95, bottom=0.08)
-    
-    num_files = len(waveform_files)
-    print(f"Procesando {num_files} archivos...")
-    
-    # Determine alpha and linewidth based on file count
-    if num_files < 50:
-        alpha_value = 0.7
-        linewidth = 1.5
-    elif num_files < 200:
-        alpha_value = 0.45
-        linewidth = 1.3
-    elif num_files < 500:
-        alpha_value = 0.3
-        linewidth = 1.1
-    else:
-        alpha_value = 0.2
-        linewidth = 1.0
-    
-    # Plot all waveforms
-    for wf_file in waveform_files:
-        try:
-            with open(wf_file, 'r') as f:
-                lines = f.readlines()
-            
-            t_half = float(lines[0].strip())
-            amplitudes = np.array([float(line.strip()) for line in lines[2:] if line.strip()])
-            
-            t_start = t_half - (WINDOW_TIME / 2)
-            t_global = t_start + (np.arange(len(amplitudes)) * SAMPLE_TIME)
-            
-            ax.plot(t_global * 1e6, amplitudes * 1000,
-                   color=COLOR_WAVEFORM_OVERLAY,
-                   alpha=alpha_value,
-                   linewidth=linewidth,
-                   antialiased=True,
-                   rasterized=False)
-        except Exception as e:
-            print(f"Error procesando {wf_file}: {e}")
-    
-    ax.set_xlabel("Tiempo Global (µs)", fontsize=12, weight='bold')
-    ax.set_ylabel("Amplitud (mV)", fontsize=12, weight='bold')
-    ax.set_title(f"Todas las Waveforms Superpuestas ({num_files} archivos)",
-                fontsize=14, weight='bold', pad=15)
-    ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5, color='#cccccc')
-    ax.set_ylim(global_min_amp * 1000, global_max_amp * 1000)
-    
-    # White background
-    ax.set_facecolor('white')
-    fig.patch.set_facecolor('#f0f0f0')
-    ax.tick_params(colors='black', labelsize=10)
-    ax.xaxis.label.set_color('black')
-    ax.yaxis.label.set_color('black')
-    ax.title.set_color('black')
-    ax.spines['bottom'].set_color('black')
-    ax.spines['top'].set_color('black')
-    ax.spines['left'].set_color('black')
-    ax.spines['right'].set_color('black')
-    
-    # Create canvas
-    canvas = FigureCanvasTkAgg(fig, master=plot_frame)
-    canvas.draw()
-    
-    # Add navigation toolbar
-    toolbar_frame = tk.Frame(plot_frame, bg='#f0f0f0')
-    toolbar_frame.pack(side="top", fill="x")
-    
-    toolbar = NavigationToolbar2Tk(canvas, toolbar_frame)
-    toolbar.update()
-    toolbar.config(background='#f0f0f0')
-    toolbar._message_label.config(background='#f0f0f0', foreground='black')
-    
-    # Pack canvas
-    canvas.get_tk_widget().pack(side="top", fill="both", expand=True)
-    
-    # Instructions
-    info_label = ctk.CTkLabel(
-        top,
-        text="💡 Usa la barra de herramientas: 🏠 Reset | ← → Navegar | 🔍 Zoom (selecciona área) | ✋ Pan (arrastra) | 🖱️ Click derecho para alejar",
-        font=ctk.CTkFont(size=10)
-    )
-    info_label.pack(side="bottom", pady=(0, 5))
-    
-    # Ensure window stays on top
-    top.after(100, lambda: top.lift())
-    top.after(100, lambda: top.focus_force())

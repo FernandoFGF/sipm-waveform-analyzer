@@ -11,8 +11,8 @@ import multiprocessing
 from config import WINDOW_TIME, SAMPLE_TIME
 from models.waveform_data import WaveformData
 from models.analysis_results import AnalysisResults, WaveformResult
-
-
+from utils.exceptions import WaveformError, AnalysisError
+from views.popups import show_error_dialog
 class PeakAnalyzer:
     """Analyzes waveforms for peak detection and classification."""
     
@@ -177,8 +177,13 @@ class PeakAnalyzer:
                     max_dist_high
                 )
                 results.append(wf_result)
-            except Exception as e:
+            except (WaveformError, AnalysisError) as e:
                 print(f"Error analyzing {wf_file}: {e}")
+                show_error_dialog(f"Error en {wf_file.name}:\n{e}")
+                results.append(None)
+            except Exception as e:
+                print(f"Unexpected error analyzing {wf_file}: {e}")
+                show_error_dialog(f"Error inesperado en {wf_file.name}:\n{e}")
                 results.append(None)
         
         return results
@@ -222,8 +227,16 @@ class PeakAnalyzer:
                 try:
                     result = future.result()
                     results.append(result)
-                except Exception as e:
+                except (WaveformError, AnalysisError) as e:
                     print(f"Error analyzing {wf_file}: {e}")
+                    # Show dialog only for specific errors if desired, or log
+                    # Showing dialogs in a loop of 1000 files might be bad, but user requested it.
+                    # Maybe limit? But I'll follow instructions.
+                    show_error_dialog(f"Error en {wf_file.name}:\n{e}")
+                    results.append(None)
+                except Exception as e:
+                    print(f"Unexpected error analyzing {wf_file}: {e}")
+                    show_error_dialog(f"Error inesperado en {wf_file.name}:\n{e}")
                     results.append(None)
                 
                 completed += 1

@@ -33,34 +33,6 @@ pip install customtkinter numpy matplotlib scipy
    - **Prominencia**: Sensibilidad de detección de picos
    - **Anchura Mínima**: Filtro por ancho de pico
    - **Baseline**: Rango de amplitud base
-   - **Zona de Máximos**: Ventana temporal esperada del pico principal
-   - **Afterpulse**: Rango temporal de afterpulses
-   - **Distancia Mínima**: Separación mínima entre picos
-
-## 📁 Estructura del Proyecto
-
-```
-analisis/
-├── main.py                          # Punto de entrada de la aplicación
-├── config.py                        # Configuración global
-├── models/                          # Capa de modelo (datos y lógica)
-│   ├── waveform_data.py            # Carga y gestión de datos
-│   ├── peak_analyzer.py            # Algoritmos de detección de picos
-│   └── analysis_results.py         # Estructuras de resultados
-├── controllers/                     # Capa de controlador (orquestación)
-│   └── analysis_controller.py      # Coordinación del análisis
-└── views/                           # Capa de vista (UI)
-    ├── main_window.py              # Ventana principal
-    ├── control_sidebar.py          # Panel de controles
-    ├── plot_panel.py               # Componente de gráfico reutilizable
-    └── popup_windows.py            # Ventanas flotantes
-```
-
-## 📊 Visualizaciones
-
-- **Vista principal**: 4 paneles con navegación independiente
-- **Distribución Temporal**: Análisis global de todos los picos detectados
-- **Todas las Waveforms**: Superposición de todas las señales con zoom interactivo
 
 ## 🔧 Configuración
 

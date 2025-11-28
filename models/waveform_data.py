@@ -7,6 +7,9 @@ from typing import List, Tuple
 from config import DATA_DIR, WINDOW_TIME, NUM_POINTS, SAMPLE_TIME
 
 
+from utils.exceptions import WaveformError
+from utils.file_io import read_waveform_file
+
 class WaveformData:
     """Manages loading and accessing waveform data files."""
     
@@ -53,7 +56,7 @@ class WaveformData:
         
         for wf_file in self.waveform_files:
             try:
-                t_half, amplitudes = self.read_waveform_file(wf_file)
+                t_half, amplitudes = read_waveform_file(wf_file)
                 
                 min_vals.append(np.min(amplitudes))
                 max_vals.append(np.max(amplitudes))
@@ -63,8 +66,10 @@ class WaveformData:
                 max_idx = np.argmax(amplitudes)
                 time_rel = (max_idx * SAMPLE_TIME) - (WINDOW_TIME / 2)
                 self.all_max_times.append(time_rel)
+            except WaveformError as e:
+                print(f"Skipping {wf_file}: {e}")
             except Exception as e:
-                print(f"Error reading {wf_file}: {e}")
+                print(f"Unexpected error reading {wf_file}: {e}")
         
         if all_data_list:
             self.all_amplitudes_flat = np.concatenate(all_data_list)
@@ -80,25 +85,13 @@ class WaveformData:
             
             print(f"Global Scale: {self.global_min_amp*1000:.2f}mV to {self.global_max_amp*1000:.2f}mV")
     
-    @staticmethod
-    def read_waveform_file(file_path: Path) -> Tuple[float, np.ndarray]:
+    def read_waveform_file(self, file_path: Path) -> Tuple[float, np.ndarray]:
         """
         Read a single waveform file.
-        
-        Args:
-            file_path: Path to waveform file
-            
-        Returns:
-            Tuple of (t_half, amplitudes)
+        Deprecated: Use utils.file_io.read_waveform_file instead.
         """
-        with open(file_path, 'r') as f:
-            lines = f.readlines()
-        
-        t_half = float(lines[0].strip())
-        amplitudes = np.array([float(line.strip()) for line in lines[2:] if line.strip()])
-        
-        return t_half, amplitudes
-    
+        return read_waveform_file(file_path)
+
     def get_file_count(self) -> int:
         """Get number of loaded files."""
         return len(self.waveform_files)

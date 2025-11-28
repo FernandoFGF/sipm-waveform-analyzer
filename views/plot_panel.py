@@ -8,6 +8,7 @@ import numpy as np
 
 from config import WINDOW_TIME, SAMPLE_TIME, COLOR_ACCEPTED, COLOR_REJECTED, COLOR_AFTERPULSE, COLOR_REJECTED_AFTERPULSE
 from models.analysis_results import WaveformResult
+from utils.plotting import save_figure
 
 
 class PlotPanel(ctk.CTkFrame):
@@ -71,6 +72,32 @@ class PlotPanel(ctk.CTkFrame):
             command=self.on_next
         )
         btn_next.pack(side="left", padx=5)
+
+        # Setup context menu
+        self._setup_context_menu()
+
+    def _setup_context_menu(self):
+        """Setup right-click context menu for export."""
+        import tkinter as tk
+        
+        self.context_menu = tk.Menu(self, tearoff=0)
+        self.context_menu.add_command(label="💾 Guardar como PNG", command=lambda: self._save_plot("png"))
+        self.context_menu.add_command(label="💾 Guardar como PDF", command=lambda: self._save_plot("pdf"))
+        self.context_menu.add_command(label="💾 Guardar como SVG", command=lambda: self._save_plot("svg"))
+        
+        # Bind right click to canvas
+        self.canvas.get_tk_widget().bind("<Button-3>", self._show_context_menu)
+
+    def _show_context_menu(self, event):
+        """Show context menu at mouse position."""
+        try:
+            self.context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.context_menu.grab_release()
+
+    def _save_plot(self, fmt):
+        """Save plot to file."""
+        save_figure(self.fig, default_prefix="waveform")
     
     def update_plot(
         self,

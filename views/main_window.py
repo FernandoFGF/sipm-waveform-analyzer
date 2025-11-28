@@ -12,7 +12,7 @@ from config import (
 from controllers.analysis_controller import AnalysisController
 from views.control_sidebar import ControlSidebar
 from views.plot_panel import PlotPanel
-from views.popup_windows import show_temporal_distribution, show_all_waveforms
+from views.popups import show_temporal_distribution, show_all_waveforms
 from utils import ResultsExporter
 
 
