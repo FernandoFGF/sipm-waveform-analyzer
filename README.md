@@ -24,10 +24,10 @@ pip install customtkinter numpy matplotlib scipy
 
 ## 🎯 Uso
 
-1. Coloca tus archivos de datos en el directorio especificado en `DATA_DIR`
+1. Coloca tus archivos de datos en el directorio especificado en `config.py` (`DATA_DIR`)
 2. Ejecuta la aplicación:
    ```bash
-   python peak_finder_gui.py
+   python main.py
    ```
 3. Ajusta los parámetros según tus necesidades:
    - **Prominencia**: Sensibilidad de detección de picos
@@ -37,6 +37,25 @@ pip install customtkinter numpy matplotlib scipy
    - **Afterpulse**: Rango temporal de afterpulses
    - **Distancia Mínima**: Separación mínima entre picos
 
+## 📁 Estructura del Proyecto
+
+```
+analisis/
+├── main.py                          # Punto de entrada de la aplicación
+├── config.py                        # Configuración global
+├── models/                          # Capa de modelo (datos y lógica)
+│   ├── waveform_data.py            # Carga y gestión de datos
+│   ├── peak_analyzer.py            # Algoritmos de detección de picos
+│   └── analysis_results.py         # Estructuras de resultados
+├── controllers/                     # Capa de controlador (orquestación)
+│   └── analysis_controller.py      # Coordinación del análisis
+└── views/                           # Capa de vista (UI)
+    ├── main_window.py              # Ventana principal
+    ├── control_sidebar.py          # Panel de controles
+    ├── plot_panel.py               # Componente de gráfico reutilizable
+    └── popup_windows.py            # Ventanas flotantes
+```
+
 ## 📊 Visualizaciones
 
 - **Vista principal**: 4 paneles con navegación independiente
@@ -45,10 +64,11 @@ pip install customtkinter numpy matplotlib scipy
 
 ## 🔧 Configuración
 
-Edita las constantes en el archivo para ajustar a tus datos:
+Edita `config.py` para ajustar a tus datos:
 - `DATA_DIR`: Directorio con los archivos de waveform
 - `WINDOW_TIME`: Duración de la ventana de adquisición
 - `NUM_POINTS`: Número de puntos por waveform
+- Valores por defecto de parámetros de análisis
 
 ## 📝 Formato de Datos
 
