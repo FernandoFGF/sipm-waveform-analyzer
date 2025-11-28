@@ -5,6 +5,8 @@ import numpy as np
 from scipy.signal import find_peaks
 from typing import List, Tuple
 from pathlib import Path
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import multiprocessing
 
 from config import WINDOW_TIME, SAMPLE_TIME
 from models.waveform_data import WaveformData
@@ -72,59 +74,74 @@ class PeakAnalyzer:
             results.max_dist_high = np.percentile(self.waveform_data.all_max_times, high_p)
             print(f"Max Dist ({max_dist_pct}%): {results.max_dist_low*1e6:.2f}µs - {results.max_dist_high*1e6:.2f}µs")
         
-        # Analyze each waveform
+        # Analyze waveforms (parallel if many files, sequential if few)
+        num_files = len(self.waveform_data.waveform_files)
+        use_parallel = num_files > 50  # Use parallel processing for >50 files
+        
+        print(f"Analyzing {num_files} files {'in parallel' if use_parallel else 'sequentially'}...")
+        
+        if use_parallel:
+            # Parallel processing for large datasets
+            wf_results = self._analyze_waveforms_parallel(
+                prominence,
+                width_samples,
+                min_dist_samples,
+                results.baseline_high,
+                results.max_dist_low,
+                results.max_dist_high
+            )
+        else:
+            # Sequential processing for small datasets
+            wf_results = self._analyze_waveforms_sequential(
+                prominence,
+                width_samples,
+                min_dist_samples,
+                results.baseline_high,
+                results.max_dist_low,
+                results.max_dist_high
+            )
+        
+        # Classify results
         afterpulse_times = []
         
-        for wf_file in self.waveform_data.waveform_files:
-            try:
-                wf_result = self._analyze_single_waveform(
-                    wf_file,
-                    prominence,
-                    width_samples,
-                    min_dist_samples,
-                    results.baseline_high,
-                    results.max_dist_low,
-                    results.max_dist_high
-                )
+        for wf_result in wf_results:
+            if wf_result is None:  # Skip failed analyses
+                continue
                 
-                # Classify result
-                good_peaks = wf_result.peaks
-                all_peaks = wf_result.all_peaks
-                
-                # Find main candidates (good peaks inside max dist zone)
-                main_candidates = self._find_main_candidates(
-                    good_peaks,
-                    wf_result.amplitudes,
-                    results.max_dist_low,
-                    results.max_dist_high
-                )
-                
-                if len(main_candidates) == 0:
-                    # Rejected
-                    if len(all_peaks) > 1:
-                        results.rejected_afterpulse_results.append(wf_result)
-                    else:
-                        results.rejected_results.append(wf_result)
+            good_peaks = wf_result.peaks
+            all_peaks = wf_result.all_peaks
+            
+            # Find main candidates (good peaks inside max dist zone)
+            main_candidates = self._find_main_candidates(
+                good_peaks,
+                wf_result.amplitudes,
+                results.max_dist_low,
+                results.max_dist_high
+            )
+            
+            if len(main_candidates) == 0:
+                # Rejected
+                if len(all_peaks) > 1:
+                    results.rejected_afterpulse_results.append(wf_result)
                 else:
-                    # Accepted or Afterpulse
-                    if len(good_peaks) > 1:
-                        # Afterpulse
-                        results.afterpulse_results.append(wf_result)
-                        results.total_peaks += len(good_peaks)
-                        
-                        # Collect afterpulse times
-                        main_peak_idx = good_peaks[np.argmax(wf_result.amplitudes[good_peaks])]
-                        for p_idx in good_peaks:
-                            if p_idx != main_peak_idx:
-                                t_ap = (p_idx * SAMPLE_TIME) - (WINDOW_TIME / 2)
-                                afterpulse_times.append(t_ap)
-                    else:
-                        # Accepted (exactly 1 good peak)
-                        results.accepted_results.append(wf_result)
-                        results.total_peaks += 1
-                        
-            except Exception as e:
-                print(f"Error analyzing {wf_file}: {e}")
+                    results.rejected_results.append(wf_result)
+            else:
+                # Accepted or Afterpulse
+                if len(good_peaks) > 1:
+                    # Afterpulse
+                    results.afterpulse_results.append(wf_result)
+                    results.total_peaks += len(good_peaks)
+                    
+                    # Collect afterpulse times
+                    main_peak_idx = good_peaks[np.argmax(wf_result.amplitudes[good_peaks])]
+                    for p_idx in good_peaks:
+                        if p_idx != main_peak_idx:
+                            t_ap = (p_idx * SAMPLE_TIME) - (WINDOW_TIME / 2)
+                            afterpulse_times.append(t_ap)
+                else:
+                    # Accepted (exactly 1 good peak)
+                    results.accepted_results.append(wf_result)
+                    results.total_peaks += 1
         
         # Calculate afterpulse range
         if len(afterpulse_times) > 0:
@@ -135,6 +152,147 @@ class PeakAnalyzer:
             print(f"Afterpulse ({afterpulse_pct}%): {results.afterpulse_low*1e6:.2f}µs - {results.afterpulse_high*1e6:.2f}µs")
         
         return results
+    
+    def _analyze_waveforms_sequential(
+        self,
+        prominence: float,
+        width_samples: int,
+        min_dist_samples: int,
+        baseline_high: float,
+        max_dist_low: float,
+        max_dist_high: float
+    ) -> List[WaveformResult]:
+        """Analyze waveforms sequentially (for small datasets)."""
+        results = []
+        
+        for wf_file in self.waveform_data.waveform_files:
+            try:
+                wf_result = self._analyze_single_waveform(
+                    wf_file,
+                    prominence,
+                    width_samples,
+                    min_dist_samples,
+                    baseline_high,
+                    max_dist_low,
+                    max_dist_high
+                )
+                results.append(wf_result)
+            except Exception as e:
+                print(f"Error analyzing {wf_file}: {e}")
+                results.append(None)
+        
+        return results
+    
+    def _analyze_waveforms_parallel(
+        self,
+        prominence: float,
+        width_samples: int,
+        min_dist_samples: int,
+        baseline_high: float,
+        max_dist_low: float,
+        max_dist_high: float
+    ) -> List[WaveformResult]:
+        """Analyze waveforms in parallel (for large datasets)."""
+        results = []
+        num_workers = min(multiprocessing.cpu_count(), 8)  # Max 8 workers
+        
+        print(f"Using {num_workers} parallel workers...")
+        
+        # Create list of arguments for each file
+        args_list = [
+            (wf_file, prominence, width_samples, min_dist_samples,
+             baseline_high, max_dist_low, max_dist_high)
+            for wf_file in self.waveform_data.waveform_files
+        ]
+        
+        # Process in parallel
+        with ProcessPoolExecutor(max_workers=num_workers) as executor:
+            # Submit all tasks
+            future_to_file = {
+                executor.submit(self._analyze_single_waveform_wrapper, args): args[0]
+                for args in args_list
+            }
+            
+            # Collect results as they complete
+            completed = 0
+            total = len(future_to_file)
+            
+            for future in as_completed(future_to_file):
+                wf_file = future_to_file[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+                except Exception as e:
+                    print(f"Error analyzing {wf_file}: {e}")
+                    results.append(None)
+                
+                completed += 1
+                if completed % 100 == 0:  # Progress update every 100 files
+                    print(f"Progress: {completed}/{total} files analyzed")
+        
+        return results
+    
+    @staticmethod
+    def _analyze_single_waveform_wrapper(args):
+        """Wrapper for parallel processing (static method)."""
+        wf_file, prominence, width_samples, min_dist_samples, baseline_high, max_dist_low, max_dist_high = args
+        
+        # Need to recreate WaveformData instance for each process
+        from models.waveform_data import WaveformData
+        waveform_data = WaveformData()
+        
+        # Read file
+        t_half, amplitudes = waveform_data.read_waveform_file(wf_file)
+        
+        # Find peaks
+        peaks, properties = find_peaks(
+            amplitudes,
+            height=0.0,
+            prominence=prominence,
+            width=0,
+            distance=min_dist_samples
+        )
+        
+        # Handle saturation
+        global_max_amp = np.max(amplitudes) * 1.05  # Approximate
+        saturation_threshold = global_max_amp * 0.95
+        peak_amps = amplitudes[peaks]
+        saturated_mask = peak_amps >= saturation_threshold
+        
+        if np.sum(saturated_mask) > 1:
+            saturated_indices = np.where(saturated_mask)[0]
+            max_sat_peak_idx = saturated_indices[np.argmax(peak_amps[saturated_indices])]
+            keep_mask = ~saturated_mask
+            keep_mask[max_sat_peak_idx] = True
+            peaks = peaks[keep_mask]
+            for key in properties:
+                if isinstance(properties[key], np.ndarray) and len(properties[key]) == len(keep_mask):
+                    properties[key] = properties[key][keep_mask]
+        
+        # Filter by width
+        if 'widths' in properties:
+            widths = properties['widths']
+            passing_peaks = [p_idx for i, p_idx in enumerate(peaks) if widths[i] >= width_samples]
+            peaks_passing_width = np.array(passing_peaks)
+        else:
+            peaks_passing_width = peaks
+        
+        # Filter by baseline
+        if len(peaks_passing_width) > 0:
+            peak_amps = amplitudes[peaks_passing_width]
+            good_peaks = np.array([p_idx for i, p_idx in enumerate(peaks_passing_width) 
+                                   if peak_amps[i] > baseline_high])
+        else:
+            good_peaks = peaks_passing_width
+        
+        return WaveformResult(
+            filename=wf_file.name,
+            t_half=t_half,
+            amplitudes=amplitudes,
+            peaks=good_peaks,
+            all_peaks=peaks,
+            properties=properties
+        )
     
     def _analyze_single_waveform(
         self,

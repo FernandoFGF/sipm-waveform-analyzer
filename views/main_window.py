@@ -2,6 +2,8 @@
 Main application window.
 """
 import customtkinter as ctk
+from tkinter import filedialog
+from datetime import datetime
 
 from config import (
     UI_THEME, UI_COLOR_THEME, MAIN_WINDOW_SIZE,
@@ -11,6 +13,7 @@ from controllers.analysis_controller import AnalysisController
 from views.control_sidebar import ControlSidebar
 from views.plot_panel import PlotPanel
 from views.popup_windows import show_temporal_distribution, show_all_waveforms
+from utils import ResultsExporter
 
 
 class MainWindow(ctk.CTk):
@@ -37,7 +40,8 @@ class MainWindow(ctk.CTk):
             self,
             on_update_analysis=self.run_analysis,
             on_show_temporal_dist=self.show_temporal_distribution,
-            on_show_all_waveforms=self.show_all_waveforms
+            on_show_all_waveforms=self.show_all_waveforms,
+            on_export_results=self.export_results
         )
         self.sidebar.grid(row=0, column=0, rowspan=2, sticky="nsew")
         
@@ -174,3 +178,102 @@ class MainWindow(ctk.CTk):
             self.controller.waveform_data.global_min_amp,
             self.controller.waveform_data.global_max_amp
         )
+    
+    def export_results(self):
+        """Export analysis results to file."""
+        # Create custom dialog for format selection
+        format_dialog = ctk.CTkToplevel(self)
+        format_dialog.title("Exportar Resultados")
+        format_dialog.geometry("300x150")
+        format_dialog.transient(self)
+        format_dialog.grab_set()
+        
+        # Center the dialog
+        format_dialog.update_idletasks()
+        x = (format_dialog.winfo_screenwidth() // 2) - (300 // 2)
+        y = (format_dialog.winfo_screenheight() // 2) - (150 // 2)
+        format_dialog.geometry(f"300x150+{x}+{y}")
+        
+        selected_format = [None]  # Use list to allow modification in nested function
+        
+        def select_format(fmt):
+            selected_format[0] = fmt
+            format_dialog.destroy()
+        
+        # Label
+        label = ctk.CTkLabel(
+            format_dialog,
+            text="Selecciona el formato de exportación:",
+            font=ctk.CTkFont(size=13)
+        )
+        label.pack(pady=(20, 15))
+        
+        # Buttons frame
+        btn_frame = ctk.CTkFrame(format_dialog, fg_color="transparent")
+        btn_frame.pack(pady=10)
+        
+        # CSV button
+        csv_btn = ctk.CTkButton(
+            btn_frame,
+            text="📄 CSV",
+            command=lambda: select_format("csv"),
+            width=120,
+            height=40,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            fg_color="#27ae60",
+            hover_color="#229954"
+        )
+        csv_btn.pack(side="left", padx=10)
+        
+        # JSON button
+        json_btn = ctk.CTkButton(
+            btn_frame,
+            text="📊 JSON",
+            command=lambda: select_format("json"),
+            width=120,
+            height=40,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            fg_color="#2980b9",
+            hover_color="#21618c"
+        )
+        json_btn.pack(side="left", padx=10)
+        
+        # Wait for dialog to close
+        self.wait_window(format_dialog)
+        
+        if not selected_format[0]:
+            return
+        
+        file_ext = selected_format[0]
+        
+        # Determine file types
+        if file_ext == "csv":
+            file_types = [("CSV files", "*.csv"), ("All files", "*.*")]
+        else:
+            file_types = [("JSON files", "*.json"), ("All files", "*.*")]
+        
+        # Ask for save location
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_filename = f"analysis_results_{timestamp}.{file_ext}"
+        
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=f".{file_ext}",
+            filetypes=file_types,
+            initialfile=default_filename,
+            title="Guardar Resultados"
+        )
+        
+        if not filepath:
+            return
+        
+        # Export based on format
+        try:
+            if file_ext == "csv":
+                ResultsExporter.export_analysis_to_csv(self.controller.results, filepath)
+            else:
+                params = self.sidebar.get_parameters()
+                ResultsExporter.export_analysis_to_json(self.controller.results, filepath, params)
+            
+            print(f"✓ Resultados exportados exitosamente a {filepath}")
+        except Exception as e:
+            print(f"Error exportando resultados: {e}")

@@ -4,6 +4,7 @@ Analysis controller - orchestrates the analysis workflow.
 from models.waveform_data import WaveformData
 from models.peak_analyzer import PeakAnalyzer
 from models.analysis_results import AnalysisResults
+from utils.results_cache import ResultsCache
 
 
 class AnalysisController:
@@ -14,6 +15,7 @@ class AnalysisController:
         self.waveform_data = WaveformData()
         self.peak_analyzer = PeakAnalyzer(self.waveform_data)
         self.results = AnalysisResults()
+        self.cache = ResultsCache()  # Initialize cache
         
         # Current navigation indices
         self.current_accepted_idx = 0
@@ -53,14 +55,42 @@ class AnalysisController:
         Returns:
             Analysis results
         """
-        self.results = self.peak_analyzer.analyze_all(
-            prominence_pct,
-            width_time,
-            min_dist_time,
-            baseline_pct,
-            max_dist_pct,
-            afterpulse_pct
+        # Prepare parameters for caching
+        params = {
+            'prominence_pct': prominence_pct,
+            'width_time': width_time,
+            'min_dist_time': min_dist_time,
+            'baseline_pct': baseline_pct,
+            'max_dist_pct': max_dist_pct,
+            'afterpulse_pct': afterpulse_pct
+        }
+        
+        # Generate cache key
+        cache_key = self.cache.get_cache_key(
+            self.waveform_data.waveform_files,
+            params
         )
+        
+        # Try to load from cache
+        cached_results = self.cache.load(cache_key)
+        
+        if cached_results is not None:
+            print("⚡ Using cached results (instant!)")
+            self.results = cached_results
+        else:
+            # Run analysis
+            print("🔄 Running new analysis...")
+            self.results = self.peak_analyzer.analyze_all(
+                prominence_pct,
+                width_time,
+                min_dist_time,
+                baseline_pct,
+                max_dist_pct,
+                afterpulse_pct
+            )
+            
+            # Save to cache
+            self.cache.save(cache_key, self.results, params)
         
         # Reset navigation indices
         self.current_accepted_idx = 0

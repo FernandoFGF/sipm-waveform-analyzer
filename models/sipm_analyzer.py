@@ -13,6 +13,10 @@ class SiPMMetrics:
     afterpulse_pct: float = 0.0
     crosstalk_afterpulse_pct: float = 0.0
     
+    # DCR rates (two calculation methods)
+    dcr_rate_total_hz: float = 0.0  # Method 1: count / total_time
+    dcr_rate_avg_hz: float = 0.0    # Method 2: 1 / mean_interval
+    
     # Event counts
     total_events: int = 0
     crosstalk_count: int = 0
@@ -102,5 +106,21 @@ class SiPMAnalyzer:
         metrics.afterpulse_pct = (metrics.afterpulse_count / total_events) * 100
         metrics.crosstalk_pct = (metrics.crosstalk_count / total_events) * 100
         metrics.crosstalk_afterpulse_pct = (metrics.crosstalk_afterpulse_count / total_events) * 100
+        
+        # Calculate DCR (Dark Count Rate) using two methods
+        if metrics.dcr_count > 0:
+            dcr_intervals = delta_t[dcr_mask]
+            
+            # Method 1: Total rate = events / total_time
+            # This gives the overall average rate across all DCR intervals
+            total_time_dcr = np.sum(dcr_intervals)
+            if total_time_dcr > 0:
+                metrics.dcr_rate_total_hz = metrics.dcr_count / total_time_dcr
+            
+            # Method 2: Average rate = 1 / mean_interval
+            # This gives the rate based on the typical interval between events
+            mean_interval_dcr = np.mean(dcr_intervals)
+            if mean_interval_dcr > 0:
+                metrics.dcr_rate_avg_hz = 1.0 / mean_interval_dcr
         
         return metrics

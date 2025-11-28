@@ -8,6 +8,7 @@ from config import (
     DEFAULT_PROMINENCE_PCT, DEFAULT_WIDTH_TIME, DEFAULT_MIN_DIST_TIME,
     DEFAULT_BASELINE_PCT, DEFAULT_MAX_DIST_PCT, DEFAULT_AFTERPULSE_PCT
 )
+from utils import get_config
 
 
 class ControlSidebar(ctk.CTkFrame):
@@ -18,7 +19,8 @@ class ControlSidebar(ctk.CTkFrame):
         parent,
         on_update_analysis: Callable,
         on_show_temporal_dist: Callable,
-        on_show_all_waveforms: Callable
+        on_show_all_waveforms: Callable,
+        on_export_results: Callable = None
     ):
         """
         Initialize control sidebar.
@@ -28,12 +30,17 @@ class ControlSidebar(ctk.CTkFrame):
             on_update_analysis: Callback for update button
             on_show_temporal_dist: Callback for temporal distribution button
             on_show_all_waveforms: Callback for all waveforms button
+            on_export_results: Callback for export button
         """
         super().__init__(parent, width=250, corner_radius=0)
         
         self.on_update_analysis = on_update_analysis
         self.on_show_temporal_dist = on_show_temporal_dist
         self.on_show_all_waveforms = on_show_all_waveforms
+        self.on_export_results = on_export_results
+        
+        # Get configuration manager
+        self.config = get_config()
         
         self.grid_rowconfigure(20, weight=1)
         
@@ -77,6 +84,30 @@ class ControlSidebar(ctk.CTkFrame):
         # Stats label
         self.stats_label = ctk.CTkLabel(self, text="Cargando...", justify="left")
         self.stats_label.grid(row=16, column=0, padx=20, pady=10, sticky="w")
+        
+        # Save configuration button
+        self.btn_save_config = ctk.CTkButton(
+            self,
+            text="💾 Guardar Configuración",
+            command=self._save_configuration,
+            fg_color="#3498db",
+            hover_color="#2980b9"
+        )
+        self.btn_save_config.grid(row=17, column=0, padx=20, pady=(10, 5))
+        
+        # Export results button
+        if self.on_export_results:
+            self.btn_export = ctk.CTkButton(
+                self,
+                text="📊 Exportar Resultados",
+                command=self.on_export_results,
+                fg_color="#e67e22",
+                hover_color="#d35400"
+            )
+            self.btn_export.grid(row=18, column=0, padx=20, pady=(0, 10))
+        
+        # Load saved configuration on startup
+        self._load_configuration()
     
     def _create_parameter_controls(self):
         """Create all parameter control widgets."""
@@ -178,3 +209,42 @@ class ControlSidebar(ctk.CTkFrame):
         text += f"Rech. c/ AP (>1 raw): {rejected_ap}\n"
         text += f"Total Picos: {total_peaks}"
         self.stats_label.configure(text=text)
+    
+    def _save_configuration(self):
+        """Save current parameter values to configuration."""
+        params = self.get_parameters()
+        self.config.save_analysis_params(params)
+        print("✓ Configuration saved!")
+        
+        # Visual feedback
+        original_text = self.btn_save_config.cget("text")
+        self.btn_save_config.configure(text="✓ Guardado!")
+        self.after(2000, lambda: self.btn_save_config.configure(text=original_text))
+    
+    def _load_configuration(self):
+        """Load saved parameter values from configuration."""
+        saved_params = self.config.get_analysis_params()
+        
+        # Load prominence
+        self.slider_prom.set(saved_params['prominence_pct'])
+        self._update_prom_label(saved_params['prominence_pct'])
+        
+        # Load width
+        self.entry_width.delete(0, 'end')
+        self.entry_width.insert(0, str(saved_params['width_time'] * 1e6))
+        
+        # Load baseline
+        self.entry_baseline.delete(0, 'end')
+        self.entry_baseline.insert(0, str(saved_params['baseline_pct']))
+        
+        # Load max dist
+        self.entry_maxdist.delete(0, 'end')
+        self.entry_maxdist.insert(0, str(saved_params['max_dist_pct']))
+        
+        # Load afterpulse
+        self.entry_afterpulse.delete(0, 'end')
+        self.entry_afterpulse.insert(0, str(saved_params['afterpulse_pct']))
+        
+        # Load min distance
+        self.entry_mindist.delete(0, 'end')
+        self.entry_mindist.insert(0, str(saved_params['min_dist_time'] * 1e6))

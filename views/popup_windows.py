@@ -8,6 +8,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 import numpy as np
 
 from config import WINDOW_TIME, SAMPLE_TIME, COLOR_WAVEFORM_OVERLAY
+from utils import get_config, ResultsExporter
 
 
 def show_temporal_distribution(parent, accepted_results, afterpulse_results):
@@ -79,7 +80,7 @@ def show_temporal_distribution(parent, accepted_results, afterpulse_results):
     
     # Variables to store current canvas and metrics widgets
     canvas_ref = {'canvas': None, 'fig': None}
-    metrics_widgets = {'widgets': []}
+    metrics_widgets = {'widgets': [], 'metrics': None}  # Store metrics object
     
     def update_plot(amp_threshold, time_threshold):
         """Update plot and metrics with new thresholds."""
@@ -87,6 +88,9 @@ def show_temporal_distribution(parent, accepted_results, afterpulse_results):
         analyzer = SiPMAnalyzer(amplitude_threshold_mV=amp_threshold, 
                                time_threshold_s=time_threshold)
         metrics = analyzer.analyze(diffs, amps_plot)
+        
+        # Store metrics for export
+        metrics_widgets['metrics'] = metrics
         
         # Clear previous plot if exists
         if canvas_ref['canvas'] is not None:
@@ -219,18 +223,67 @@ def show_temporal_distribution(parent, accepted_results, afterpulse_results):
         dcr_frame.pack(fill="x", padx=10, pady=5)
         metrics_widgets['widgets'].append(dcr_frame)
         
-        dcr_title = ctk.CTkLabel(dcr_frame, text="DCR",
+        dcr_title = ctk.CTkLabel(dcr_frame, text="DCR (Dark Count Rate)",
                                 font=ctk.CTkFont(size=13, weight="bold"))
         dcr_title.pack(pady=(10, 5))
         
-        dcr_placeholder = ctk.CTkLabel(dcr_frame, text="(Por calcular)",
-                                      font=ctk.CTkFont(size=12),
-                                      text_color="gray")
-        dcr_placeholder.pack()
+        # Display both DCR calculation methods
+        if metrics.dcr_count > 0 and metrics.dcr_rate_total_hz > 0:
+            # Method 1: Total rate
+            dcr_total_display = f"{metrics.dcr_rate_total_hz:.1f} Hz" if metrics.dcr_rate_total_hz < 1000 else f"{metrics.dcr_rate_total_hz/1000:.2f} kHz"
+            dcr_total_label = ctk.CTkLabel(
+                dcr_frame, 
+                text=f"Método 1: {dcr_total_display}",
+                font=ctk.CTkFont(size=16, weight="bold"),
+                text_color="#3498db"
+            )
+            dcr_total_label.pack()
+            
+            dcr_total_desc = ctk.CTkLabel(
+                dcr_frame,
+                text="(eventos / tiempo total)",
+                font=ctk.CTkFont(size=9),
+                text_color="gray"
+            )
+            dcr_total_desc.pack()
+            
+            # Method 2: Average rate
+            dcr_avg_display = f"{metrics.dcr_rate_avg_hz:.1f} Hz" if metrics.dcr_rate_avg_hz < 1000 else f"{metrics.dcr_rate_avg_hz/1000:.2f} kHz"
+            dcr_avg_label = ctk.CTkLabel(
+                dcr_frame,
+                text=f"Método 2: {dcr_avg_display}",
+                font=ctk.CTkFont(size=16, weight="bold"),
+                text_color="#9b59b6"
+            )
+            dcr_avg_label.pack(pady=(5, 0))
+            
+            dcr_avg_desc = ctk.CTkLabel(
+                dcr_frame,
+                text="(1 / intervalo promedio)",
+                font=ctk.CTkFont(size=9),
+                text_color="gray"
+            )
+            dcr_avg_desc.pack()
+            
+            # Explanation of difference
+            diff_pct = abs(metrics.dcr_rate_total_hz - metrics.dcr_rate_avg_hz) / metrics.dcr_rate_total_hz * 100
+            diff_label = ctk.CTkLabel(
+                dcr_frame,
+                text=f"Diferencia: {diff_pct:.1f}%",
+                font=ctk.CTkFont(size=9),
+                text_color="#e67e22"
+            )
+            diff_label.pack(pady=(5, 0))
+        else:
+            dcr_placeholder = ctk.CTkLabel(dcr_frame, text="Sin eventos DCR",
+                                          font=ctk.CTkFont(size=12),
+                                          text_color="gray")
+            dcr_placeholder.pack()
         
         dcr_count_label = ctk.CTkLabel(dcr_frame, text=f"Eventos: {metrics.dcr_count:,}",
                                       font=ctk.CTkFont(size=10))
-        dcr_count_label.pack(pady=(0, 10))
+        dcr_count_label.pack(pady=(5, 10))
+
     
     def on_update_button():
         """Handle update button click."""
@@ -240,6 +293,22 @@ def show_temporal_distribution(parent, accepted_results, afterpulse_results):
             update_plot(amp_val, time_val)
         except ValueError:
             print("Error: Por favor ingresa valores numéricos válidos")
+    
+    def on_save_config():
+        """Save current threshold values to configuration."""
+        try:
+            amp_val = float(amp_entry.get())
+            time_val = float(time_entry.get())
+            config = get_config()
+            config.save_sipm_thresholds(amp_val, time_val)
+            print("✓ SiPM thresholds saved!")
+            
+            # Visual feedback
+            original_text = save_config_btn.cget("text")
+            save_config_btn.configure(text="✓ Guardado!")
+            top.after(2000, lambda: save_config_btn.configure(text=original_text))
+        except ValueError:
+            print("Error: Valores inválidos")
     
     # Create metrics title
     metrics_title = ctk.CTkLabel(
@@ -252,6 +321,10 @@ def show_temporal_distribution(parent, accepted_results, afterpulse_results):
     # Create controls frame for threshold inputs
     controls_frame = ctk.CTkFrame(metrics_frame, fg_color="#1a1a1a")
     controls_frame.pack(fill="x", padx=10, pady=(0, 15))
+    
+    # Load saved thresholds
+    config = get_config()
+    saved_thresholds = config.get_sipm_thresholds()
     
     # Amplitude threshold input
     amp_label = ctk.CTkLabel(
@@ -267,7 +340,7 @@ def show_temporal_distribution(parent, accepted_results, afterpulse_results):
         height=28,
         font=ctk.CTkFont(size=11)
     )
-    amp_entry.insert(0, "60.0")
+    amp_entry.insert(0, str(saved_thresholds['amplitude_threshold_mV']))
     amp_entry.pack(pady=(0, 10))
     
     # Time threshold input
@@ -284,7 +357,7 @@ def show_temporal_distribution(parent, accepted_results, afterpulse_results):
         height=28,
         font=ctk.CTkFont(size=11)
     )
-    time_entry.insert(0, "100.0")  # 1e-4 s = 100 µs
+    time_entry.insert(0, str(saved_thresholds['time_threshold_us']))
     time_entry.pack(pady=(0, 10))
     
     # Update button
@@ -298,7 +371,150 @@ def show_temporal_distribution(parent, accepted_results, afterpulse_results):
         fg_color="#2ecc71",
         hover_color="#27ae60"
     )
-    update_button.pack(pady=(5, 10))
+    update_button.pack(pady=(5, 5))
+    
+    # Save configuration button
+    save_config_btn = ctk.CTkButton(
+        controls_frame,
+        text="💾 Guardar Config",
+        command=on_save_config,
+        width=120,
+        height=28,
+        font=ctk.CTkFont(size=11),
+        fg_color="#3498db",
+        hover_color="#2980b9"
+    )
+    save_config_btn.pack(pady=(0, 5))
+    
+    # Export button
+    def on_export():
+        """Export SiPM metrics."""
+        from tkinter import filedialog
+        from datetime import datetime
+        
+        # Check if metrics exist
+        if metrics_widgets['metrics'] is None:
+            print("Error: No hay métricas para exportar")
+            return
+        
+        # Create custom dialog for format selection
+        export_dialog = ctk.CTkToplevel(top)
+        export_dialog.title("Exportar Métricas SiPM")
+        export_dialog.geometry("300x150")
+        export_dialog.transient(top)
+        export_dialog.grab_set()
+        
+        # Center the dialog
+        export_dialog.update_idletasks()
+        x = (export_dialog.winfo_screenwidth() // 2) - (300 // 2)
+        y = (export_dialog.winfo_screenheight() // 2) - (150 // 2)
+        export_dialog.geometry(f"300x150+{x}+{y}")
+        
+        selected_format = [None]
+        
+        def select_format(fmt):
+            selected_format[0] = fmt
+            export_dialog.destroy()
+        
+        # Label
+        label = ctk.CTkLabel(
+            export_dialog,
+            text="Selecciona el formato:",
+            font=ctk.CTkFont(size=13)
+        )
+        label.pack(pady=(20, 15))
+        
+        # Buttons frame
+        btn_frame = ctk.CTkFrame(export_dialog, fg_color="transparent")
+        btn_frame.pack(pady=10)
+        
+        # CSV button
+        csv_btn = ctk.CTkButton(
+            btn_frame,
+            text="📄 CSV",
+            command=lambda: select_format("csv"),
+            width=120,
+            height=40,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            fg_color="#27ae60",
+            hover_color="#229954"
+        )
+        csv_btn.pack(side="left", padx=10)
+        
+        # JSON button
+        json_btn = ctk.CTkButton(
+            btn_frame,
+            text="📊 JSON",
+            command=lambda: select_format("json"),
+            width=120,
+            height=40,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            fg_color="#2980b9",
+            hover_color="#21618c"
+        )
+        json_btn.pack(side="left", padx=10)
+        
+        # Wait for dialog
+        top.wait_window(export_dialog)
+        
+        if not selected_format[0]:
+            return
+        
+        file_ext = selected_format[0]
+        
+        # Determine file types
+        if file_ext == "csv":
+            file_types = [("CSV files", "*.csv"), ("All files", "*.*")]
+        else:
+            file_types = [("JSON files", "*.json"), ("All files", "*.*")]
+        
+        # Ask for save location
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_filename = f"sipm_metrics_{timestamp}.{file_ext}"
+        
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=f".{file_ext}",
+            filetypes=file_types,
+            initialfile=default_filename,
+            title="Guardar Métricas"
+        )
+        
+        if not filepath:
+            return
+        
+        # Get current thresholds
+        try:
+            amp_val = float(amp_entry.get())
+            time_val = float(time_entry.get())
+        except ValueError:
+            amp_val = None
+            time_val = None
+        
+        # Export
+        try:
+            if file_ext == "csv":
+                ResultsExporter.export_sipm_metrics_to_csv(
+                    metrics_widgets['metrics'], filepath, amp_val, time_val
+                )
+            else:
+                ResultsExporter.export_sipm_metrics_to_json(
+                    metrics_widgets['metrics'], filepath, amp_val, time_val
+                )
+            print(f"✓ Métricas exportadas a {filepath}")
+        except Exception as e:
+            print(f"Error exportando: {e}")
+    
+    export_btn = ctk.CTkButton(
+        controls_frame,
+        text="📊 Exportar Métricas",
+        command=on_export,
+        width=120,
+        height=28,
+        font=ctk.CTkFont(size=11),
+        fg_color="#e67e22",
+        hover_color="#d35400"
+    )
+    export_btn.pack(pady=(0, 10))
     
     # Initial plot with default thresholds
     update_plot(60.0, 1e-4)
