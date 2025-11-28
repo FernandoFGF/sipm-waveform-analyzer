@@ -1,9 +1,0 @@
-Resolucion(SRATE): 50000000.0 Sa/s
-Resolucion (real): 816200000.0000001 Sa/s
-Puntos con SRATE: 250.0
-Num de puntos(real): 4081
-Segment Puntos: 4081.0
-Time base scale: 5e-07 s
-Trigger (0.5PE): 0.0 v
-Tiempo de ejecucion: 1.65 min
-Baseline:9.99999e+37 - 0.0

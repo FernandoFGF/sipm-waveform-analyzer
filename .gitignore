@@ -34,6 +34,7 @@ wheels/
 .DS_Store
 Thumbs.db
 
-# Data files (opcional - descomenta si no quieres subir los datos)
-# *.txt
-# SiPMG_*/
+# Data files and instructions
+SiPMG_LAr_DCR1/
+SiPMG_LAr_DCR1_AMP/
+INSTRUCCIONES_GITHUB.md
