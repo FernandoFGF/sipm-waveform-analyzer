@@ -12,7 +12,7 @@ from config import (
 from controllers.analysis_controller import AnalysisController
 from views.control_sidebar import ControlSidebar
 from views.plot_panel import PlotPanel
-from views.popups import show_temporal_distribution, show_all_waveforms
+from views.popups import show_temporal_distribution, show_all_waveforms, show_charge_histogram
 from utils import ResultsExporter
 
 
@@ -41,6 +41,7 @@ class MainWindow(ctk.CTk):
             on_update_analysis=self.run_analysis,
             on_show_temporal_dist=self.show_temporal_distribution,
             on_show_all_waveforms=self.show_all_waveforms,
+            on_show_charge_histogram=self.show_charge_histogram,
             on_export_results=self.export_results
         )
         self.sidebar.grid(row=0, column=0, rowspan=2, sticky="nsew")
@@ -99,7 +100,8 @@ class MainWindow(ctk.CTk):
             afterpulse=results.get_afterpulse_count(),
             rejected=results.get_rejected_count(),
             rejected_ap=results.get_rejected_afterpulse_count(),
-            total_peaks=results.total_peaks
+            total_peaks=results.total_peaks,
+            baseline_mv=(results.baseline_high - results.baseline_low) * 1000  # Baseline amplitude in mV
         )
         
         # Update panel titles
@@ -177,6 +179,14 @@ class MainWindow(ctk.CTk):
             self.controller.waveform_data.waveform_files,
             self.controller.waveform_data.global_min_amp,
             self.controller.waveform_data.global_max_amp
+        )
+    
+    def show_charge_histogram(self):
+        """Show charge histogram popup."""
+        show_charge_histogram(
+            self,
+            self.controller.results.accepted_results,
+            self.controller.results.baseline_high
         )
     
     def export_results(self):

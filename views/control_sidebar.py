@@ -20,6 +20,7 @@ class ControlSidebar(ctk.CTkFrame):
         on_update_analysis: Callable,
         on_show_temporal_dist: Callable,
         on_show_all_waveforms: Callable,
+        on_show_charge_histogram: Callable,
         on_export_results: Callable = None
     ):
         """
@@ -37,6 +38,7 @@ class ControlSidebar(ctk.CTkFrame):
         self.on_update_analysis = on_update_analysis
         self.on_show_temporal_dist = on_show_temporal_dist
         self.on_show_all_waveforms = on_show_all_waveforms
+        self.on_show_charge_histogram = on_show_charge_histogram
         self.on_export_results = on_export_results
         
         # Get configuration manager
@@ -66,7 +68,7 @@ class ControlSidebar(ctk.CTkFrame):
         # Temporal distribution button
         self.btn_timedist = ctk.CTkButton(
             self, 
-            text="Ver Dist. Temporal", 
+            text="Ver dist. temporal", 
             command=self.on_show_temporal_dist,
             fg_color="gray"
         )
@@ -75,15 +77,26 @@ class ControlSidebar(ctk.CTkFrame):
         # All waveforms button
         self.btn_allwaveforms = ctk.CTkButton(
             self, 
-            text="Ver Todas Waveforms", 
+            text="Ver wf completo", 
             command=self.on_show_all_waveforms,
             fg_color="gray"
         )
-        self.btn_allwaveforms.grid(row=15, column=0, padx=20, pady=(0, 20))
+        self.btn_allwaveforms.grid(row=15, column=0, padx=20, pady=(0, 10))
+        
+        # Charge histogram button
+        self.btn_chargehist = ctk.CTkButton(
+            self, 
+            text="Ver hist. carga", 
+            command=self.on_show_charge_histogram,
+            fg_color="gray"
+        )
+        self.btn_chargehist.grid(row=16, column=0, padx=20, pady=(0, 20))
         
         # Stats label
         self.stats_label = ctk.CTkLabel(self, text="Cargando...", justify="left")
-        self.stats_label.grid(row=16, column=0, padx=20, pady=10, sticky="w")
+        # Stats label
+        self.stats_label = ctk.CTkLabel(self, text="Cargando...", justify="left")
+        self.stats_label.grid(row=17, column=0, padx=20, pady=10, sticky="w")
         
         # Save configuration button
         self.btn_save_config = ctk.CTkButton(
@@ -93,7 +106,15 @@ class ControlSidebar(ctk.CTkFrame):
             fg_color="#3498db",
             hover_color="#2980b9"
         )
-        self.btn_save_config.grid(row=17, column=0, padx=20, pady=(10, 5))
+        # Save configuration button
+        self.btn_save_config = ctk.CTkButton(
+            self,
+            text="💾 Guardar Configuración",
+            command=self._save_configuration,
+            fg_color="#3498db",
+            hover_color="#2980b9"
+        )
+        self.btn_save_config.grid(row=18, column=0, padx=20, pady=(10, 5))
         
         # Export results button
         if self.on_export_results:
@@ -104,7 +125,7 @@ class ControlSidebar(ctk.CTkFrame):
                 fg_color="#e67e22",
                 hover_color="#d35400"
             )
-            self.btn_export.grid(row=18, column=0, padx=20, pady=(0, 10))
+            self.btn_export.grid(row=19, column=0, padx=20, pady=(0, 10))
         
         # Load saved configuration on startup
         self._load_configuration()
@@ -139,6 +160,10 @@ class ControlSidebar(ctk.CTkFrame):
         # Baseline %
         self.lbl_baseline = ctk.CTkLabel(self, text="Baseline (%):")
         self.lbl_baseline.grid(row=5, column=0, padx=20, pady=(10, 0), sticky="w")
+        
+        # Baseline indicator (will be updated with arrow and percentage)
+        self.baseline_indicator = ctk.CTkLabel(self, text="", font=ctk.CTkFont(size=11))
+        self.baseline_indicator.grid(row=5, column=0, padx=(120, 20), pady=(10, 0), sticky="w")
         
         self.entry_baseline = ctk.CTkEntry(self)
         self.entry_baseline.insert(0, str(DEFAULT_BASELINE_PCT))
@@ -200,7 +225,7 @@ class ControlSidebar(ctk.CTkFrame):
             }
     
     def update_stats(self, total_files: int, accepted: int, afterpulse: int, 
-                    rejected: int, rejected_ap: int, total_peaks: int):
+                    rejected: int, rejected_ap: int, total_peaks: int, baseline_mv: float = None):
         """Update statistics display."""
         text = f"Total Archivos: {total_files}\n"
         text += f"Aceptados (1): {accepted}\n"
@@ -209,6 +234,37 @@ class ControlSidebar(ctk.CTkFrame):
         text += f"Rech. c/ AP (>1 raw): {rejected_ap}\n"
         text += f"Total Picos: {total_peaks}"
         self.stats_label.configure(text=text)
+        
+        # Update baseline indicator if provided
+        if baseline_mv is not None and hasattr(self, 'baseline_indicator'):
+            self._update_baseline_indicator(baseline_mv)
+    
+    
+    def _update_baseline_indicator(self, baseline_mv: float):
+        """Update baseline indicator with current value and comparison."""
+        from utils.baseline_tracker import BaselineTracker
+        
+        tracker = BaselineTracker()
+        comparison = tracker.get_comparison()
+        
+        if comparison is None:
+            # No history yet, just show nothing or first measurement
+            self.baseline_indicator.configure(text="", text_color="white")
+        else:
+            # Show arrow and percentage
+            arrow = comparison['arrow']
+            percentage = comparison['percentage']
+            color_name = comparison['color']
+            
+            # Map color name to hex
+            color_hex = "#2ecc71" if color_name == "green" else "#e74c3c"
+            
+            indicator_text = f"{arrow} {percentage:.1f}%"
+            
+            self.baseline_indicator.configure(
+                text=indicator_text,
+                text_color=color_hex
+            )
     
     def _save_configuration(self):
         """Save current parameter values to configuration."""

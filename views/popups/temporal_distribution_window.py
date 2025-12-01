@@ -26,22 +26,27 @@ def show_temporal_distribution(parent, accepted_results, afterpulse_results):
         return
     
     # Create window
-    window = BasePopup(parent, "Distribución Temporal Global - Análisis SiPM", 1200, 700)
+    window = BasePopup(parent, "Distribución Temporal Global - Análisis SiPM", 1400, 700)
     
-    # Create main frame with two columns
+    # Create main frame with three columns
     main_frame = ctk.CTkFrame(window)
     main_frame.pack(fill="both", expand=True, padx=10, pady=10)
-    main_frame.grid_columnconfigure(0, weight=3)
-    main_frame.grid_columnconfigure(1, weight=1)
+    main_frame.grid_columnconfigure(0, weight=1)  # Controls
+    main_frame.grid_columnconfigure(1, weight=3)  # Plot
+    main_frame.grid_columnconfigure(2, weight=1)  # Metrics
     main_frame.grid_rowconfigure(0, weight=1)
     
-    # Left: Plot
+    # Left: Controls panel
+    controls_frame = ctk.CTkFrame(main_frame)
+    controls_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+    
+    # Center: Plot
     plot_frame = ctk.CTkFrame(main_frame)
-    plot_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+    plot_frame.grid(row=0, column=1, sticky="nsew", padx=5)
     
     # Right: Metrics panel
     metrics_frame = ctk.CTkFrame(main_frame)
-    metrics_frame.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
+    metrics_frame.grid(row=0, column=2, sticky="nsew", padx=(5, 0))
     
     # Collect all valid peaks with global times
     all_global_peaks = []
@@ -324,17 +329,13 @@ def show_temporal_distribution(parent, accepted_results, afterpulse_results):
         except ValueError:
             print("Error: Valores inválidos")
     
-    # Create metrics title
-    metrics_title = ctk.CTkLabel(
-        metrics_frame,
-        text="📊 Métricas SiPM",
+    # Controls Panel
+    controls_title = ctk.CTkLabel(
+        controls_frame,
+        text="⚙️ Controles",
         font=ctk.CTkFont(size=16, weight="bold")
     )
-    metrics_title.pack(pady=(10, 10))
-    
-    # Create controls frame for threshold inputs
-    controls_frame = ctk.CTkFrame(metrics_frame, fg_color="#1a1a1a")
-    controls_frame.pack(fill="x", padx=10, pady=(0, 15))
+    controls_title.pack(pady=(20, 15))
     
     # Load saved thresholds
     config = get_config()
@@ -346,16 +347,17 @@ def show_temporal_distribution(parent, accepted_results, afterpulse_results):
         text="Threshold Amplitud (mV):",
         font=ctk.CTkFont(size=11)
     )
-    amp_label.pack(pady=(10, 2))
+    amp_label.pack(pady=(10, 2), padx=10)
     
     amp_entry = ctk.CTkEntry(
         controls_frame,
-        width=120,
-        height=28,
-        font=ctk.CTkFont(size=11)
+        width=150,
+        height=32,
+        font=ctk.CTkFont(size=12),
+        justify="center"
     )
     amp_entry.insert(0, str(saved_thresholds['amplitude_threshold_mV']))
-    amp_entry.pack(pady=(0, 10))
+    amp_entry.pack(pady=(0, 10), padx=10)
     
     # Time threshold input
     time_label = ctk.CTkLabel(
@@ -363,42 +365,61 @@ def show_temporal_distribution(parent, accepted_results, afterpulse_results):
         text="Threshold Tiempo (µs):",
         font=ctk.CTkFont(size=11)
     )
-    time_label.pack(pady=(5, 2))
+    time_label.pack(pady=(5, 2), padx=10)
     
     time_entry = ctk.CTkEntry(
         controls_frame,
-        width=120,
-        height=28,
-        font=ctk.CTkFont(size=11)
+        width=150,
+        height=32,
+        font=ctk.CTkFont(size=12),
+        justify="center"
     )
     time_entry.insert(0, str(saved_thresholds['time_threshold_us']))
-    time_entry.pack(pady=(0, 10))
+    time_entry.pack(pady=(0, 10), padx=10)
     
     # Update button
     update_button = ctk.CTkButton(
         controls_frame,
         text="🔄 Actualizar",
         command=on_update_button,
-        width=120,
-        height=32,
-        font=ctk.CTkFont(size=12, weight="bold"),
-        fg_color="#2ecc71",
-        hover_color="#27ae60"
+        width=150,
+        height=40,
+        font=ctk.CTkFont(size=14, weight="bold"),
+        fg_color="#27ae60",
+        hover_color="#229954"
     )
-    update_button.pack(pady=(5, 5))
+    update_button.pack(pady=20, padx=10)
     
     # Save configuration button
     save_config_btn = ctk.CTkButton(
         controls_frame,
         text="💾 Guardar Config",
         command=on_save_config,
-        width=120,
-        height=28,
-        font=ctk.CTkFont(size=11),
+        width=150,
+        height=32,
+        font=ctk.CTkFont(size=12),
         fg_color="#3498db",
         hover_color="#2980b9"
     )
-    save_config_btn.pack(pady=(0, 5))
+    save_config_btn.pack(pady=(0, 10), padx=10)
+    
+    # Info label
+    info_label = ctk.CTkLabel(
+        controls_frame,
+        text="💡 Ajusta los thresholds\nde amplitud y tiempo.\nLuego presiona Actualizar.",
+        font=ctk.CTkFont(size=10),
+        text_color="#7f8c8d",
+        justify="center"
+    )
+    info_label.pack(pady=(10, 20), padx=10)
+    
+    # Metrics Panel
+    metrics_title = ctk.CTkLabel(
+        metrics_frame,
+        text="📊 Métricas SiPM",
+        font=ctk.CTkFont(size=16, weight="bold")
+    )
+    metrics_title.pack(pady=(10, 10))
     
     # Export button
     def on_export():

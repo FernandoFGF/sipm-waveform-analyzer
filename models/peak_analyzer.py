@@ -12,6 +12,7 @@ from config import WINDOW_TIME, SAMPLE_TIME
 from models.waveform_data import WaveformData
 from models.analysis_results import AnalysisResults, WaveformResult
 from utils.exceptions import WaveformError, AnalysisError
+from utils.baseline_tracker import BaselineTracker
 from views.popups import show_error_dialog
 class PeakAnalyzer:
     """Analyzes waveforms for peak detection and classification."""
@@ -150,6 +151,30 @@ class PeakAnalyzer:
             results.afterpulse_low = np.percentile(afterpulse_times, low_p)
             results.afterpulse_high = np.percentile(afterpulse_times, high_p)
             print(f"Afterpulse ({afterpulse_pct}%): {results.afterpulse_low*1e6:.2f}µs - {results.afterpulse_high*1e6:.2f}µs")
+        
+        # Calculate and track baseline amplitude from accepted results only
+        if len(results.accepted_results) > 0:
+            # Collect all amplitudes from accepted waveforms
+            accepted_amplitudes = []
+            for wf_result in results.accepted_results:
+                accepted_amplitudes.extend(wf_result.amplitudes)
+            
+            if len(accepted_amplitudes) > 0:
+                accepted_amplitudes = np.array(accepted_amplitudes)
+                # Calculate baseline range from accepted results
+                low_p = (100 - baseline_pct) / 2
+                high_p = 100 - low_p
+                baseline_low_accepted = np.percentile(accepted_amplitudes, low_p)
+                baseline_high_accepted = np.percentile(accepted_amplitudes, high_p)
+                
+                # Calculate baseline amplitude (range)
+                baseline_amplitude_mv = (baseline_high_accepted - baseline_low_accepted) * 1000
+                
+                # Track baseline for historical comparison
+                tracker = BaselineTracker()
+                tracker.add_baseline(baseline_amplitude_mv)
+                
+                print(f"Baseline amplitude (accepted only): {baseline_amplitude_mv:.2f}mV")
         
         return results
     
