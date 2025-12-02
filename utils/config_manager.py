@@ -1,4 +1,4 @@
-"""
+﻿"""
 Configuration persistence manager.
 """
 import json

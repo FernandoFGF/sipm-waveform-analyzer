@@ -1,4 +1,4 @@
-"""
+﻿"""
 Temporal distribution analysis window.
 """
 import customtkinter as ctk
@@ -320,11 +320,11 @@ def show_temporal_distribution(parent, accepted_results, afterpulse_results):
             time_val = float(time_entry.get())
             config = get_config()
             config.save_sipm_thresholds(amp_val, time_val)
-            print("✓ SiPM thresholds saved!")
+            print("[OK] SiPM thresholds saved!")
             
             # Visual feedback
             original_text = save_config_btn.cget("text")
-            save_config_btn.configure(text="✓ Guardado!")
+            save_config_btn.configure(text="[OK] Guardado!")
             window.after(2000, lambda: save_config_btn.configure(text=original_text))
         except ValueError:
             print("Error: Valores inválidos")
@@ -380,7 +380,7 @@ def show_temporal_distribution(parent, accepted_results, afterpulse_results):
     # Update button
     update_button = ctk.CTkButton(
         controls_frame,
-        text="🔄 Actualizar",
+        text="[RUNNING] Actualizar",
         command=on_update_button,
         width=150,
         height=40,
@@ -535,7 +535,7 @@ def show_temporal_distribution(parent, accepted_results, afterpulse_results):
                 ResultsExporter.export_sipm_metrics_to_json(
                     metrics_widgets['metrics'], filepath, amp_val, time_val
                 )
-            print(f"✓ Métricas exportadas a {filepath}")
+            print(f"[OK] Métricas exportadas a {filepath}")
         except Exception as e:
             print(f"Error exportando: {e}")
     

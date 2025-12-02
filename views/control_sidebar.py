@@ -1,4 +1,4 @@
-"""
+﻿"""
 Control sidebar for parameter adjustment.
 """
 import customtkinter as ctk
@@ -21,7 +21,9 @@ class ControlSidebar(ctk.CTkFrame):
         on_show_temporal_dist: Callable,
         on_show_all_waveforms: Callable,
         on_show_charge_histogram: Callable,
-        on_export_results: Callable = None
+        on_export_results: Callable = None,
+        on_show_advanced_analysis: Callable = None,
+        on_show_signal_processing: Callable = None
     ):
         """
         Initialize control sidebar.
@@ -31,7 +33,10 @@ class ControlSidebar(ctk.CTkFrame):
             on_update_analysis: Callback for update button
             on_show_temporal_dist: Callback for temporal distribution button
             on_show_all_waveforms: Callback for all waveforms button
+            on_show_charge_histogram: Callback for charge histogram button
             on_export_results: Callback for export button
+            on_show_advanced_analysis: Callback for advanced SiPM analysis button
+            on_show_signal_processing: Callback for signal processing button
         """
         super().__init__(parent, width=250, corner_radius=0)
         
@@ -40,6 +45,8 @@ class ControlSidebar(ctk.CTkFrame):
         self.on_show_all_waveforms = on_show_all_waveforms
         self.on_show_charge_histogram = on_show_charge_histogram
         self.on_export_results = on_export_results
+        self.on_show_advanced_analysis = on_show_advanced_analysis
+        self.on_show_signal_processing = on_show_signal_processing
         
         # Get configuration manager
         self.config = get_config()
@@ -57,75 +64,120 @@ class ControlSidebar(ctk.CTkFrame):
         # Create parameter controls
         self._create_parameter_controls()
         
-        # Update button
+        # ===== BUTTON GRID SECTION (2x4 Grid) =====
+        # Create frame for button grid
+        button_frame = ctk.CTkFrame(self, fg_color="transparent")
+        button_frame.grid(row=13, column=0, padx=10, pady=(20, 10), sticky="ew")
+        
+        # Configure grid columns to be equal width
+        button_frame.grid_columnconfigure(0, weight=1, uniform="button")
+        button_frame.grid_columnconfigure(1, weight=1, uniform="button")
+        
+        # Row 1: Actualizar | Guardar conf
         self.btn_update = ctk.CTkButton(
-            self, 
-            text="Actualizar Búsqueda", 
-            command=self.on_update_analysis
+            button_frame,
+            text="Actualizar",
+            command=self.on_update_analysis,
+            fg_color="#3498db",
+            hover_color="#2980b9",
+            width=110,
+            height=35,
+            font=ctk.CTkFont(size=12)
         )
-        self.btn_update.grid(row=13, column=0, padx=20, pady=(20, 10))
+        self.btn_update.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
         
-        # Temporal distribution button
+        self.btn_save_config = ctk.CTkButton(
+            button_frame,
+            text="Guardar\nconf",
+            command=self._save_configuration,
+            fg_color="#3498db",
+            hover_color="#2980b9",
+            width=110,
+            height=35,
+            font=ctk.CTkFont(size=11)
+        )
+        self.btn_save_config.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+        
+        # Row 2: Ver dist. temporal | Ver wf completo
         self.btn_timedist = ctk.CTkButton(
-            self, 
-            text="Ver dist. temporal", 
+            button_frame,
+            text="Ver dist.\ntemporal",
             command=self.on_show_temporal_dist,
-            fg_color="gray"
+            fg_color="gray",
+            width=110,
+            height=35,
+            font=ctk.CTkFont(size=11)
         )
-        self.btn_timedist.grid(row=14, column=0, padx=20, pady=(0, 10))
+        self.btn_timedist.grid(row=1, column=0, padx=5, pady=5, sticky="ew")
         
-        # All waveforms button
         self.btn_allwaveforms = ctk.CTkButton(
-            self, 
-            text="Ver wf completo", 
+            button_frame,
+            text="Ver wf\ncompleto",
             command=self.on_show_all_waveforms,
-            fg_color="gray"
+            fg_color="gray",
+            width=110,
+            height=35,
+            font=ctk.CTkFont(size=11)
         )
-        self.btn_allwaveforms.grid(row=15, column=0, padx=20, pady=(0, 10))
+        self.btn_allwaveforms.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
         
-        # Charge histogram button
+        # Row 3: Ver hist. carga | Ver análisis avanzado
         self.btn_chargehist = ctk.CTkButton(
-            self, 
-            text="Ver hist. carga", 
+            button_frame,
+            text="Ver hist.\ncarga",
             command=self.on_show_charge_histogram,
-            fg_color="gray"
+            fg_color="gray",
+            width=110,
+            height=35,
+            font=ctk.CTkFont(size=11)
         )
-        self.btn_chargehist.grid(row=16, column=0, padx=20, pady=(0, 20))
+        self.btn_chargehist.grid(row=2, column=0, padx=5, pady=5, sticky="ew")
         
-        # Stats label
-        self.stats_label = ctk.CTkLabel(self, text="Cargando...", justify="left")
-        # Stats label
-        self.stats_label = ctk.CTkLabel(self, text="Cargando...", justify="left")
-        self.stats_label.grid(row=17, column=0, padx=20, pady=10, sticky="w")
+        # Advanced analysis button (placeholder for Phase 2)
+        self.btn_advanced_analysis = ctk.CTkButton(
+            button_frame,
+            text="Ver análisis\navanzado",
+            command=self.on_show_advanced_analysis if self.on_show_advanced_analysis else lambda: None,
+            fg_color="gray",
+            width=110,
+            height=35,
+            font=ctk.CTkFont(size=11),
+            state="disabled" if not self.on_show_advanced_analysis else "normal"
+        )
+        self.btn_advanced_analysis.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
         
-        # Save configuration button
-        self.btn_save_config = ctk.CTkButton(
-            self,
-            text="💾 Guardar Configuración",
-            command=self._save_configuration,
-            fg_color="#3498db",
-            hover_color="#2980b9"
+        # Row 4: Filtros | Exportar
+        # Signal processing button (placeholder for Phase 3)
+        self.btn_signal_processing = ctk.CTkButton(
+            button_frame,
+            text="Filtros",
+            command=self.on_show_signal_processing if self.on_show_signal_processing else lambda: None,
+            fg_color="#e67e22",
+            hover_color="#d35400",
+            width=110,
+            height=35,
+            font=ctk.CTkFont(size=12),
+            state="disabled" if not self.on_show_signal_processing else "normal"
         )
-        # Save configuration button
-        self.btn_save_config = ctk.CTkButton(
-            self,
-            text="💾 Guardar Configuración",
-            command=self._save_configuration,
-            fg_color="#3498db",
-            hover_color="#2980b9"
-        )
-        self.btn_save_config.grid(row=18, column=0, padx=20, pady=(10, 5))
+        self.btn_signal_processing.grid(row=3, column=0, padx=5, pady=5, sticky="ew")
         
         # Export results button
         if self.on_export_results:
             self.btn_export = ctk.CTkButton(
-                self,
-                text="📊 Exportar Resultados",
+                button_frame,
+                text="Exportar",
                 command=self.on_export_results,
                 fg_color="#e67e22",
-                hover_color="#d35400"
+                hover_color="#d35400",
+                width=110,
+                height=35,
+                font=ctk.CTkFont(size=12)
             )
-            self.btn_export.grid(row=19, column=0, padx=20, pady=(0, 10))
+            self.btn_export.grid(row=3, column=1, padx=5, pady=5, sticky="ew")
+        
+        # Stats label (moved below button grid)
+        self.stats_label = ctk.CTkLabel(self, text="Cargando...", justify="left")
+        self.stats_label.grid(row=14, column=0, padx=20, pady=10, sticky="w")
         
         # Load saved configuration on startup
         self._load_configuration()

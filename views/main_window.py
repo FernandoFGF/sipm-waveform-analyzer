@@ -1,4 +1,4 @@
-"""
+﻿"""
 Main application window.
 """
 import customtkinter as ctk
@@ -42,7 +42,9 @@ class MainWindow(ctk.CTk):
             on_show_temporal_dist=self.show_temporal_distribution,
             on_show_all_waveforms=self.show_all_waveforms,
             on_show_charge_histogram=self.show_charge_histogram,
-            on_export_results=self.export_results
+            on_export_results=self.export_results,
+            on_show_advanced_analysis=self.show_advanced_analysis,
+            on_show_signal_processing=self.show_signal_processing
         )
         self.sidebar.grid(row=0, column=0, rowspan=2, sticky="nsew")
         
@@ -188,6 +190,24 @@ class MainWindow(ctk.CTk):
             self.controller.results.accepted_results,
             self.controller.results.baseline_high
         )
+    
+    def show_advanced_analysis(self):
+        """Show advanced SiPM analysis window (to be implemented in Phase 2)."""
+        print("🔬 Advanced SiPM Analysis - Coming soon in Phase 2!")
+        # TODO: Implement in Phase 2
+        # - Recovery Time analysis
+        # - Jitter Temporal analysis
+        # - Pulse Shape Analysis
+    
+    def show_signal_processing(self):
+        """Show signal processing window."""
+        from views.popups import show_signal_processing
+        show_signal_processing(
+            self,
+            self.controller.waveform_data,
+            self.controller.results
+        )
+
     
     def export_results(self):
         """Export analysis results to file."""

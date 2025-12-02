@@ -1,4 +1,4 @@
-"""
+﻿"""
 File I/O utilities for reading waveforms and exporting results.
 """
 import csv
@@ -51,7 +51,7 @@ def export_to_csv(data: list, headers: list, filepath: str):
         writer = csv.writer(f)
         writer.writerow(headers)
         writer.writerows(data)
-    print(f"✓ Exported to {filepath}")
+    print(f"[OK] Exported to {filepath}")
 
 def export_to_json(data: Dict[str, Any], filepath: str):
     """
@@ -63,4 +63,4 @@ def export_to_json(data: Dict[str, Any], filepath: str):
     """
     with open(filepath, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=2)
-    print(f"✓ Exported to {filepath}")
+    print(f"[OK] Exported to {filepath}")

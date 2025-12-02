@@ -5,6 +5,7 @@ from models.waveform_data import WaveformData
 from models.peak_analyzer import PeakAnalyzer
 from models.analysis_results import AnalysisResults
 from utils.results_cache import ResultsCache
+import config
 
 
 class AnalysisController:
@@ -65,21 +66,22 @@ class AnalysisController:
             'afterpulse_pct': afterpulse_pct
         }
         
-        # Generate cache key
+        # Generate cache key including DATA_DIR to differentiate datasets
         cache_key = self.cache.get_cache_key(
             self.waveform_data.waveform_files,
-            params
+            params,
+            data_dir=str(config.DATA_DIR)
         )
         
         # Try to load from cache
         cached_results = self.cache.load(cache_key)
         
         if cached_results is not None:
-            print("⚡ Using cached results (instant!)")
+            print("Using cached results (instant!)")
             self.results = cached_results
         else:
             # Run analysis
-            print("🔄 Running new analysis...")
+            print("Running new analysis...")
             self.results = self.peak_analyzer.analyze_all(
                 prominence_pct,
                 width_time,

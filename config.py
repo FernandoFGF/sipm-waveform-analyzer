@@ -12,8 +12,23 @@ DATA_DIR = Path(r"c:\Users\Ferna\Desktop\Laboratorio\analisis\SiPMG_LAr_DCR1_AMP
 # WAVEFORM PARAMETERS
 # ============================================================================
 WINDOW_TIME = 5e-6  # 5 microseconds
-NUM_POINTS = 4081
+
+# Auto-detect NUM_POINTS from the first data file in the directory
+# The file format has: first line (metadata), data lines, last line (empty)
+# So NUM_POINTS = total_lines - 2
+try:
+    first_file = next(DATA_DIR.glob("*.txt"))
+    with open(first_file, 'r') as f:
+        total_lines = sum(1 for _ in f)
+    NUM_POINTS = total_lines - 2
+except StopIteration:
+    NUM_POINTS = 4081
+except Exception as e:
+    NUM_POINTS = 4081
+
 SAMPLE_TIME = WINDOW_TIME / NUM_POINTS
+
+
 
 # ============================================================================
 # DEFAULT ANALYSIS PARAMETERS

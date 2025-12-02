@@ -63,8 +63,11 @@ class WaveformData:
                 all_data_list.append(amplitudes)
                 
                 # Max time relative to trigger
+                # Use original SAMPLE_TIME (not adjusted for decimation) for consistent max_dist zone
+                from config import WINDOW_TIME, NUM_POINTS
+                original_sample_time = WINDOW_TIME / NUM_POINTS
                 max_idx = np.argmax(amplitudes)
-                time_rel = (max_idx * SAMPLE_TIME) - (WINDOW_TIME / 2)
+                time_rel = (max_idx * original_sample_time) - (WINDOW_TIME / 2)
                 self.all_max_times.append(time_rel)
             except WaveformError as e:
                 print(f"Skipping {wf_file}: {e}")

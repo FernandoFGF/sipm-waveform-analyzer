@@ -1,0 +1,727 @@
+"""
+Signal processing window with filter preview.
+"""
+import customtkinter as ctk
+import tkinter as tk
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import numpy as np
+
+from config import SAMPLE_TIME
+from utils.signal_filters import (
+    apply_savitzky_golay, apply_matched_filter, apply_wiener_filter,
+    apply_wavelet_denoise, calculate_snr_improvement, calculate_rms_noise
+)
+from views.popups.base_popup import BasePopup
+
+
+def show_signal_processing(parent, waveform_data, current_results):
+    """
+    Show signal processing window with filter preview.
+    
+    Args:
+        parent: Parent window
+        waveform_data: WaveformData object with all loaded waveforms
+        current_results: Current analysis results
+    """
+    if not waveform_data or not waveform_data.waveform_files:
+        print("No waveform data available")
+        return
+    
+    # Create window
+    window = BasePopup(parent, "Procesamiento de Señal", 1400, 700)
+    
+    # Create main frame with three columns
+    main_frame = ctk.CTkFrame(window)
+    main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+    main_frame.grid_columnconfigure(0, weight=1)  # Controls
+    main_frame.grid_columnconfigure(1, weight=2)  # Original view
+    main_frame.grid_columnconfigure(2, weight=2)  # Filtered view
+    main_frame.grid_rowconfigure(0, weight=1)
+    
+    # Left: Controls panel
+    controls_frame = ctk.CTkFrame(main_frame)
+    controls_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+    
+    # Center: Original plot
+    original_frame = ctk.CTkFrame(main_frame)
+    original_frame.grid(row=0, column=1, sticky="nsew", padx=5)
+    
+    # Right: Filtered plot
+    filtered_frame = ctk.CTkFrame(main_frame)
+    filtered_frame.grid(row=0, column=2, sticky="nsew", padx=(5, 0))
+    
+    # State variables
+    state = {
+        'current_idx': 0,
+        'total_waveforms': len(waveform_data.waveform_files),
+        'original_canvas': None,
+        'filtered_canvas': None,
+        'original_fig': None,
+        'filtered_fig': None,
+        'current_filter': 'Savitzky-Golay',
+        'filtered_amplitudes': None
+    }
+    
+    # ===== CONTROLS PANEL =====
+    controls_title = ctk.CTkLabel(
+        controls_frame,
+        text="⚙️ Controles",
+        font=ctk.CTkFont(size=16, weight="bold")
+    )
+    controls_title.pack(pady=(20, 15))
+    
+    # Filter selector
+    filter_label = ctk.CTkLabel(
+        controls_frame,
+        text="Filtro:",
+        font=ctk.CTkFont(size=12)
+    )
+    filter_label.pack(pady=(10, 5))
+    
+    filter_var = ctk.StringVar(value="Savitzky-Golay")
+    filter_selector = ctk.CTkOptionMenu(
+        controls_frame,
+        values=["Savitzky-Golay", "Matched Filter", "Wiener Filter", "Wavelet Denoise"],
+        variable=filter_var,
+        width=180,
+        height=35,
+        font=ctk.CTkFont(size=12),
+        command=lambda choice: on_filter_change(choice)
+    )
+    filter_selector.pack(pady=(0, 15))
+    
+    # Parameters frame (dynamic based on filter)
+    params_frame = ctk.CTkFrame(controls_frame, fg_color="transparent")
+    params_frame.pack(fill="x", padx=10, pady=10)
+    
+    # Parameter widgets (will be created dynamically)
+    param_widgets = {}
+    
+    def create_savgol_params():
+        """Create Savitzky-Golay parameters."""
+        clear_params()
+        
+        # Window length
+        window_label = ctk.CTkLabel(params_frame, text="Window Length:", font=ctk.CTkFont(size=11))
+        window_label.pack(pady=(5, 2))
+        
+        window_value = ctk.CTkLabel(params_frame, text="11", font=ctk.CTkFont(size=14, weight="bold"))
+        window_value.pack()
+        
+        def on_window_change(val):
+            # Ensure odd number
+            val = int(val)
+            if val % 2 == 0:
+                val += 1
+            window_value.configure(text=str(val))
+        
+        window_slider = ctk.CTkSlider(
+            params_frame, from_=5, to=51, number_of_steps=23,
+            command=on_window_change, width=150
+        )
+        window_slider.set(11)
+        window_slider.pack(pady=(0, 10))
+        
+        # Poly order
+        poly_label = ctk.CTkLabel(params_frame, text="Poly Order:", font=ctk.CTkFont(size=11))
+        poly_label.pack(pady=(5, 2))
+        
+        poly_value = ctk.CTkLabel(params_frame, text="3", font=ctk.CTkFont(size=14, weight="bold"))
+        poly_value.pack()
+        
+        poly_slider = ctk.CTkSlider(
+            params_frame, from_=1, to=5, number_of_steps=4,
+            command=lambda val: poly_value.configure(text=str(int(val))),
+            width=150
+        )
+        poly_slider.set(3)
+        poly_slider.pack(pady=(0, 10))
+        
+        param_widgets['window_slider'] = window_slider
+        param_widgets['window_value'] = window_value
+        param_widgets['poly_slider'] = poly_slider
+        param_widgets['poly_value'] = poly_value
+    
+    def create_wiener_params():
+        """Create Wiener filter parameters."""
+        clear_params()
+        
+        size_label = ctk.CTkLabel(params_frame, text="Window Size:", font=ctk.CTkFont(size=11))
+        size_label.pack(pady=(5, 2))
+        
+        size_value = ctk.CTkLabel(params_frame, text="5", font=ctk.CTkFont(size=14, weight="bold"))
+        size_value.pack()
+        
+        size_slider = ctk.CTkSlider(
+            params_frame, from_=3, to=15, number_of_steps=12,
+            command=lambda val: size_value.configure(text=str(int(val))),
+            width=150
+        )
+        size_slider.set(5)
+        size_slider.pack(pady=(0, 10))
+        
+        param_widgets['size_slider'] = size_slider
+        param_widgets['size_value'] = size_value
+    
+    def create_wavelet_params():
+        """Create Wavelet parameters."""
+        clear_params()
+        
+        wavelet_label = ctk.CTkLabel(params_frame, text="Wavelet Type:", font=ctk.CTkFont(size=11))
+        wavelet_label.pack(pady=(5, 2))
+        
+        wavelet_var = ctk.StringVar(value="db4")
+        wavelet_menu = ctk.CTkOptionMenu(
+            params_frame,
+            values=["db4", "sym4", "coif3", "haar"],
+            variable=wavelet_var,
+            width=150,
+            height=30
+        )
+        wavelet_menu.pack(pady=(0, 10))
+        
+        mode_label = ctk.CTkLabel(params_frame, text="Threshold Mode:", font=ctk.CTkFont(size=11))
+        mode_label.pack(pady=(5, 2))
+        
+        mode_var = ctk.StringVar(value="soft")
+        mode_menu = ctk.CTkOptionMenu(
+            params_frame,
+            values=["soft", "hard"],
+            variable=mode_var,
+            width=150,
+            height=30
+        )
+        mode_menu.pack(pady=(0, 10))
+        
+        param_widgets['wavelet_var'] = wavelet_var
+        param_widgets['mode_var'] = mode_var
+    
+    def create_matched_params():
+        """Create Matched filter parameters."""
+        clear_params()
+        
+        info_label = ctk.CTkLabel(
+            params_frame,
+            text="Template: Auto-generado\ndel pulso actual",
+            font=ctk.CTkFont(size=10),
+            text_color="#7f8c8d"
+        )
+        info_label.pack(pady=10)
+    
+    def clear_params():
+        """Clear all parameter widgets."""
+        for widget in params_frame.winfo_children():
+            widget.destroy()
+        param_widgets.clear()
+    
+    def on_filter_change(filter_name):
+        """Handle filter selection change."""
+        state['current_filter'] = filter_name
+        
+        if filter_name == "Savitzky-Golay":
+            create_savgol_params()
+        elif filter_name == "Wiener Filter":
+            create_wiener_params()
+        elif filter_name == "Wavelet Denoise":
+            create_wavelet_params()
+        elif filter_name == "Matched Filter":
+            create_matched_params()
+    
+    # Initialize with Savitzky-Golay params
+    create_savgol_params()
+    
+    # Navigation section
+    nav_frame = ctk.CTkFrame(controls_frame, fg_color="transparent")
+    nav_frame.pack(fill="x", padx=10, pady=20)
+    
+    nav_label = ctk.CTkLabel(
+        nav_frame,
+        text="Navegación:",
+        font=ctk.CTkFont(size=12, weight="bold")
+    )
+    nav_label.pack(pady=(0, 10))
+    
+    current_label = ctk.CTkLabel(
+        nav_frame,
+        text=f"1 / {state['total_waveforms']}",
+        font=ctk.CTkFont(size=14)
+    )
+    current_label.pack(pady=5)
+    
+    nav_buttons_frame = ctk.CTkFrame(nav_frame, fg_color="transparent")
+    nav_buttons_frame.pack(pady=5)
+    
+    def navigate_prev():
+        """Navigate to previous waveform."""
+        if state['current_idx'] > 0:
+            state['current_idx'] -= 1
+            update_plots()
+    
+    def navigate_next():
+        """Navigate to next waveform."""
+        if state['current_idx'] < state['total_waveforms'] - 1:
+            state['current_idx'] += 1
+            update_plots()
+    
+    prev_btn = ctk.CTkButton(
+        nav_buttons_frame,
+        text="◄",
+        command=navigate_prev,
+        width=60,
+        height=35,
+        font=ctk.CTkFont(size=16)
+    )
+    prev_btn.pack(side="left", padx=5)
+    
+    next_btn = ctk.CTkButton(
+        nav_buttons_frame,
+        text="►",
+        command=navigate_next,
+        width=60,
+        height=35,
+        font=ctk.CTkFont(size=16)
+    )
+    next_btn.pack(side="left", padx=5)
+    
+    # Filename label
+    filename_label = ctk.CTkLabel(
+        nav_frame,
+        text="",
+        font=ctk.CTkFont(size=9),
+        text_color="#7f8c8d",
+        wraplength=180
+    )
+    filename_label.pack(pady=(10, 0))
+    
+    # Metrics display
+    metrics_frame = ctk.CTkFrame(controls_frame, fg_color="#2b2b2b")
+    metrics_frame.pack(fill="x", padx=10, pady=15)
+    
+    metrics_title = ctk.CTkLabel(
+        metrics_frame,
+        text="📊 Métricas",
+        font=ctk.CTkFont(size=12, weight="bold")
+    )
+    metrics_title.pack(pady=(10, 5))
+    
+    snr_label = ctk.CTkLabel(
+        metrics_frame,
+        text="SNR Mejora: -- dB",
+        font=ctk.CTkFont(size=11)
+    )
+    snr_label.pack(pady=2)
+    
+    rms_before_label = ctk.CTkLabel(
+        metrics_frame,
+        text="RMS antes: -- mV",
+        font=ctk.CTkFont(size=10),
+        text_color="#7f8c8d"
+    )
+    rms_before_label.pack(pady=2)
+    
+    rms_after_label = ctk.CTkLabel(
+        metrics_frame,
+        text="RMS después: -- mV",
+        font=ctk.CTkFont(size=10),
+        text_color="#7f8c8d"
+    )
+    rms_after_label.pack(pady=(2, 10))
+    
+    # Update button
+    update_btn = ctk.CTkButton(
+        controls_frame,
+        text="Actualizar Preview",
+        command=lambda: update_plots(),
+        width=180,
+        param_widgets['window_value'] = window_value
+        param_widgets['poly_slider'] = poly_slider
+        param_widgets['poly_value'] = poly_value
+    
+    def create_wiener_params():
+        """Create Wiener filter parameters."""
+        clear_params()
+        
+        size_label = ctk.CTkLabel(params_frame, text="Window Size:", font=ctk.CTkFont(size=11))
+        size_label.pack(pady=(5, 2))
+        
+        size_value = ctk.CTkLabel(params_frame, text="5", font=ctk.CTkFont(size=14, weight="bold"))
+        size_value.pack()
+        
+        size_slider = ctk.CTkSlider(
+            params_frame, from_=3, to=15, number_of_steps=12,
+            command=lambda val: size_value.configure(text=str(int(val))),
+            width=150
+        )
+        size_slider.set(5)
+        size_slider.pack(pady=(0, 10))
+        
+        param_widgets['size_slider'] = size_slider
+        param_widgets['size_value'] = size_value
+    
+    def create_wavelet_params():
+        """Create Wavelet parameters."""
+        clear_params()
+        
+        wavelet_label = ctk.CTkLabel(params_frame, text="Wavelet Type:", font=ctk.CTkFont(size=11))
+        wavelet_label.pack(pady=(5, 2))
+        
+        wavelet_var = ctk.StringVar(value="db4")
+        wavelet_menu = ctk.CTkOptionMenu(
+            params_frame,
+            values=["db4", "sym4", "coif3", "haar"],
+            variable=wavelet_var,
+            width=150,
+            height=30
+        )
+        wavelet_menu.pack(pady=(0, 10))
+        
+        mode_label = ctk.CTkLabel(params_frame, text="Threshold Mode:", font=ctk.CTkFont(size=11))
+        mode_label.pack(pady=(5, 2))
+        
+        mode_var = ctk.StringVar(value="soft")
+        mode_menu = ctk.CTkOptionMenu(
+            params_frame,
+            values=["soft", "hard"],
+            variable=mode_var,
+            width=150,
+            height=30
+        )
+        mode_menu.pack(pady=(0, 10))
+        
+        param_widgets['wavelet_var'] = wavelet_var
+        param_widgets['mode_var'] = mode_var
+    
+    def create_matched_params():
+        """Create Matched filter parameters."""
+        clear_params()
+        
+        info_label = ctk.CTkLabel(
+            params_frame,
+            text="Template: Auto-generado\ndel pulso actual",
+            font=ctk.CTkFont(size=10),
+            text_color="#7f8c8d"
+        )
+        info_label.pack(pady=10)
+    
+    def clear_params():
+        """Clear all parameter widgets."""
+        for widget in params_frame.winfo_children():
+            widget.destroy()
+        param_widgets.clear()
+    
+    def on_filter_change(filter_name):
+        """Handle filter selection change."""
+        state['current_filter'] = filter_name
+        
+        if filter_name == "Smoothing (Savitzky-Golay)":
+            create_savgol_params()
+        elif filter_name == "Wiener Filter":
+            create_wiener_params()
+        elif filter_name == "Wavelet Denoise":
+            create_wavelet_params()
+        elif filter_name == "Matched Filter":
+            create_matched_params()
+    
+    # Initialize with Savitzky-Golay params
+    create_savgol_params()
+    
+    # Navigation section
+    nav_frame = ctk.CTkFrame(controls_frame, fg_color="transparent")
+    nav_frame.pack(fill="x", padx=10, pady=20)
+    
+    nav_label = ctk.CTkLabel(
+        nav_frame,
+        text="Navegación:",
+        font=ctk.CTkFont(size=12, weight="bold")
+    )
+    nav_label.pack(pady=(0, 10))
+    
+    current_label = ctk.CTkLabel(
+        nav_frame,
+        text=f"1 / {state['total_waveforms']}",
+        font=ctk.CTkFont(size=14)
+    )
+    current_label.pack(pady=5)
+    
+    nav_buttons_frame = ctk.CTkFrame(nav_frame, fg_color="transparent")
+    nav_buttons_frame.pack(pady=5)
+    
+    def navigate_prev():
+        """Navigate to previous waveform."""
+        if state['current_idx'] > 0:
+            state['current_idx'] -= 1
+            update_plots()
+    
+    def navigate_next():
+        """Navigate to next waveform."""
+        if state['current_idx'] < state['total_waveforms'] - 1:
+            state['current_idx'] += 1
+            update_plots()
+    
+    prev_btn = ctk.CTkButton(
+        nav_buttons_frame,
+        text="◄",
+        command=navigate_prev,
+        width=60,
+        height=35,
+        font=ctk.CTkFont(size=16)
+    )
+    prev_btn.pack(side="left", padx=5)
+    
+    next_btn = ctk.CTkButton(
+        nav_buttons_frame,
+        text="►",
+        command=navigate_next,
+        width=60,
+        height=35,
+        font=ctk.CTkFont(size=16)
+    )
+    next_btn.pack(side="left", padx=5)
+    
+    # Filename label
+    filename_label = ctk.CTkLabel(
+        nav_frame,
+        text="",
+        font=ctk.CTkFont(size=9),
+        text_color="#7f8c8d",
+        wraplength=180
+    )
+    filename_label.pack(pady=(10, 0))
+    
+    # Metrics display
+    metrics_frame = ctk.CTkFrame(controls_frame, fg_color="#2b2b2b")
+    metrics_frame.pack(fill="x", padx=10, pady=15)
+    
+    metrics_title = ctk.CTkLabel(
+        metrics_frame,
+        text="📊 Métricas",
+        font=ctk.CTkFont(size=12, weight="bold")
+    )
+    metrics_title.pack(pady=(10, 5))
+    
+    snr_label = ctk.CTkLabel(
+        metrics_frame,
+        text="SNR Mejora: -- dB",
+        font=ctk.CTkFont(size=11)
+    )
+    snr_label.pack(pady=2)
+    
+    rms_before_label = ctk.CTkLabel(
+        metrics_frame,
+        text="RMS antes: -- mV",
+        font=ctk.CTkFont(size=10),
+        text_color="#7f8c8d"
+    )
+    rms_before_label.pack(pady=2)
+    
+    rms_after_label = ctk.CTkLabel(
+        metrics_frame,
+        text="RMS después: -- mV",
+        font=ctk.CTkFont(size=10),
+        text_color="#7f8c8d"
+    )
+    rms_after_label.pack(pady=(2, 10))
+    
+    # ===== PLOT FUNCTIONS (defined before buttons) =====
+    def apply_current_filter(amplitudes):
+        """Apply the currently selected filter with current parameters."""
+        filter_name = state['current_filter']
+        
+        print(f"\n=== Applying filter: {filter_name} ===")
+        print(f"Input signal range: {np.min(amplitudes):.6f} to {np.max(amplitudes):.6f}")
+        
+        try:
+            if filter_name == "Smoothing (Savitzky-Golay)":
+                window = int(param_widgets['window_slider'].get())
+                poly = int(param_widgets['poly_slider'].get())
+                print(f"Parameters: window={window}, poly={poly}")
+                filtered = apply_savitzky_golay(amplitudes, window, poly)
+                print(f"Output signal range: {np.min(filtered):.6f} to {np.max(filtered):.6f}")
+                print(f"Difference: {np.sum(np.abs(amplitudes - filtered)):.6f}")
+                return filtered
+            
+            elif filter_name == "Low-pass (Butterworth)":
+                cutoff_freq = float(param_widgets['cutoff_slider'].get())
+                order = int(param_widgets['order_slider'].get())
+                print(f"Parameters: cutoff={cutoff_freq} MHz, order={order}")
+                # Apply butterworth low-pass filter
+                from scipy.signal import butter, filtfilt
+                from config import SAMPLE_TIME
+                fs = 1 / SAMPLE_TIME  # Sampling frequency
+                nyquist = fs / 2
+                cutoff_normalized = (cutoff_freq * 1e6) / nyquist
+                if cutoff_normalized >= 1.0:
+                    cutoff_normalized = 0.99
+                b, a = butter(order, cutoff_normalized, btype='low')
+                filtered = filtfilt(b, a, amplitudes)
+                print(f"Output signal range: {np.min(filtered):.6f} to {np.max(filtered):.6f}")
+                return filtered
+            
+            elif filter_name == "Decimation":
+                factor = int(param_widgets['factor_slider'].get())
+                print(f"Parameters: factor={factor}")
+                # Decimate signal (anti-aliasing + downsampling)
+                from scipy.signal import decimate
+                filtered = decimate(amplitudes, factor, zero_phase=True)
+                # Interpolate back to original length
+                from scipy.interpolate import interp1d
+                x_decimated = np.linspace(0, len(amplitudes)-1, len(filtered))
+                x_original = np.arange(len(amplitudes))
+                interp_func = interp1d(x_decimated, filtered, kind='cubic', fill_value='extrapolate')
+                filtered = interp_func(x_original)
+                print(f"Output signal range: {np.min(filtered):.6f} to {np.max(filtered):.6f}")
+                return filtered
+            
+            elif filter_name == "Baseline Subtraction":
+                method = param_widgets['method_var'].get()
+                print(f"Parameters: method={method}")
+                if method == "Mean":
+                    baseline = np.mean(amplitudes[:100])
+                elif method == "Median":
+                    baseline = np.median(amplitudes[:100])
+                else:  # Polynomial
+                    degree = 3
+                    x = np.arange(len(amplitudes))
+                    coeffs = np.polyfit(x, amplitudes, degree)
+                    baseline_curve = np.polyval(coeffs, x)
+                    filtered = amplitudes - baseline_curve
+                    print(f"Output signal range: {np.min(filtered):.6f} to {np.max(filtered):.6f}")
+                    return filtered
+                filtered = amplitudes - baseline
+                print(f"Baseline value: {baseline:.6f}")
+                print(f"Output signal range: {np.min(filtered):.6f} to {np.max(filtered):.6f}")
+                return filtered
+            
+            elif filter_name == "Wiener Filter":
+                size = int(param_widgets['size_slider'].get())
+                print(f"Parameters: size={size}")
+                filtered = apply_wiener_filter(amplitudes, size)
+                print(f"Output signal range: {np.min(filtered):.6f} to {np.max(filtered):.6f}")
+                print(f"Difference: {np.sum(np.abs(amplitudes - filtered)):.6f}")
+                return filtered
+            
+            elif filter_name == "Wavelet Denoise":
+                wavelet = param_widgets['wavelet_var'].get()
+                mode = param_widgets['mode_var'].get()
+                print(f"Parameters: wavelet={wavelet}, mode={mode}")
+                filtered = apply_wavelet_denoise(amplitudes, wavelet=wavelet, mode=mode)
+                print(f"Output signal range: {np.min(filtered):.6f} to {np.max(filtered):.6f}")
+                print(f"Difference: {np.sum(np.abs(amplitudes - filtered)):.6f}")
+                return filtered
+            
+            elif filter_name == "Matched Filter":
+                print("Parameters: auto-template")
+                filtered = apply_matched_filter(amplitudes)
+                print(f"Output signal range: {np.min(filtered):.6f} to {np.max(filtered):.6f}")
+                return filtered
+            
+        except Exception as e:
+            print(f"Error applying filter: {e}")
+            import traceback
+            traceback.print_exc()
+            return amplitudes.copy()
+        
+        return amplitudes.copy()
+    
+    def update_plots():
+        """Update both original and filtered plots."""
+        print("\n>>> update_plots() called")
+        idx = state['current_idx']
+        wf_path = waveform_data.waveform_files[idx]
+        
+        # Read waveform data
+        from utils.file_io import read_waveform_file
+        try:
+            t_half, amplitudes = read_waveform_file(wf_path)
+        except Exception as e:
+            print(f"Error reading waveform: {e}")
+            return
+        
+        times = np.arange(len(amplitudes)) * SAMPLE_TIME * 1e6  # Convert to µs
+        
+        # Apply filter
+        filtered_amps = apply_current_filter(amplitudes)
+        state['filtered_amplitudes'] = filtered_amps
+        
+        # Convert to mV
+        amps_mv = amplitudes * 1000
+        filtered_mv = filtered_amps * 1000
+        
+        # Update filename
+        filename_label.configure(text=wf_path.name)
+        current_label.configure(text=f"{idx + 1} / {state['total_waveforms']}")
+        
+        # Calculate metrics
+        snr_improvement = calculate_snr_improvement(amplitudes, filtered_amps)
+        rms_before = calculate_rms_noise(amplitudes) * 1000  # to mV
+        rms_after = calculate_rms_noise(filtered_amps) * 1000  # to mV
+        
+        # Update metrics labels
+        snr_label.configure(text=f"SNR Mejora: {snr_improvement:+.2f} dB")
+        rms_before_label.configure(text=f"RMS antes: {rms_before:.3f} mV")
+        rms_after_label.configure(text=f"RMS después: {rms_after:.3f} mV")
+        
+        # Plot original
+        if state['original_fig'] is None:
+            state['original_fig'] = plt.Figure(figsize=(6, 5), dpi=100)
+            state['original_ax'] = state['original_fig'].add_subplot(111)
+        
+        ax_orig = state['original_ax']
+        ax_orig.clear()
+        ax_orig.plot(times, amps_mv, linewidth=1, color='#3498db')
+        ax_orig.set_xlabel("Tiempo (µs)", fontsize=10)
+        ax_orig.set_ylabel("Amplitud (mV)", fontsize=10)
+        ax_orig.set_title("Original", fontsize=12, weight='bold')
+        ax_orig.grid(True, alpha=0.3)
+        
+        if state['original_canvas'] is None:
+            state['original_canvas'] = FigureCanvasTkAgg(state['original_fig'], master=original_frame)
+            state['original_canvas'].get_tk_widget().pack(fill="both", expand=True)
+        
+        state['original_canvas'].draw()
+        state['original_canvas'].flush_events()
+        
+        # Plot filtered
+        if state['filtered_fig'] is None:
+            state['filtered_fig'] = plt.Figure(figsize=(6, 5), dpi=100)
+            state['filtered_ax'] = state['filtered_fig'].add_subplot(111)
+        
+        ax_filt = state['filtered_ax']
+        ax_filt.clear()
+        ax_filt.plot(times, filtered_mv, linewidth=1, color='#27ae60')
+        ax_filt.set_xlabel("Tiempo (µs)", fontsize=10)
+        ax_filt.set_ylabel("Amplitud (mV)", fontsize=10)
+        ax_filt.set_title(f"Filtrado ({state['current_filter']})", fontsize=12, weight='bold')
+        ax_filt.grid(True, alpha=0.3)
+        
+        # Match y-axis limits
+        y_min = min(ax_orig.get_ylim()[0], ax_filt.get_ylim()[0])
+        y_max = max(ax_orig.get_ylim()[1], ax_filt.get_ylim()[1])
+        ax_orig.set_ylim(y_min, y_max)
+        ax_filt.set_ylim(y_min, y_max)
+        
+        if state['filtered_canvas'] is None:
+            state['filtered_canvas'] = FigureCanvasTkAgg(state['filtered_fig'], master=filtered_frame)
+            state['filtered_canvas'].get_tk_widget().pack(fill="both", expand=True)
+        
+        state['filtered_canvas'].draw()
+        state['filtered_canvas'].flush_events()
+        
+        print(">>> update_plots() completed\n")
+    
+    # Update button
+    update_btn = ctk.CTkButton(
+        controls_frame,
+        text="Actualizar Preview",
+        command=update_plots,  # Direct reference, not lambda
+        width=180,
+        height=40,
+        font=ctk.CTkFont(size=14, weight="bold"),
+        fg_color="#27ae60",
+        hover_color="#229954"
+    )
+    update_btn.pack(pady=20)
+    
+    # Initial plot
+    update_plots()

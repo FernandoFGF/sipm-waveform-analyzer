@@ -1,4 +1,4 @@
-"""
+﻿"""
 Export utilities for analysis results.
 """
 import csv
@@ -55,7 +55,7 @@ class ResultsExporter:
             for res in results.rejected_afterpulse_results:
                 ResultsExporter._write_waveform_row(writer, res, 'rejected_afterpulse')
         
-        print(f"✓ Analysis exported to {filepath}")
+        print(f"[OK] Analysis exported to {filepath}")
     
     @staticmethod
     def _write_waveform_row(writer, res: WaveformResult, category: str):
@@ -120,7 +120,7 @@ class ResultsExporter:
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2)
         
-        print(f"✓ Analysis exported to {filepath}")
+        print(f"[OK] Analysis exported to {filepath}")
     
     @staticmethod
     def _waveform_to_dict(res: WaveformResult) -> Dict[str, Any]:
@@ -184,7 +184,7 @@ class ResultsExporter:
             writer.writerow(['DCR Rate (Method 1: events/time)', f"{metrics.dcr_rate_total_hz:.2f}", 'Hz'])
             writer.writerow(['DCR Rate (Method 2: 1/mean_interval)', f"{metrics.dcr_rate_avg_hz:.2f}", 'Hz'])
         
-        print(f"✓ SiPM metrics exported to {filepath}")
+        print(f"[OK] SiPM metrics exported to {filepath}")
     
     @staticmethod
     def export_sipm_metrics_to_json(metrics: SiPMMetrics, filepath: str,
@@ -232,4 +232,4 @@ class ResultsExporter:
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2)
         
-        print(f"✓ SiPM metrics exported to {filepath}")
+        print(f"[OK] SiPM metrics exported to {filepath}")

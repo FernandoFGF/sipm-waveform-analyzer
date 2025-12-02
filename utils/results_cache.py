@@ -1,4 +1,4 @@
-"""
+﻿"""
 Results caching system for analysis optimization.
 """
 import hashlib
@@ -37,13 +37,14 @@ class ResultsCache:
         with open(self.metadata_file, 'w') as f:
             json.dump(self.metadata, f, indent=2)
     
-    def get_cache_key(self, files: list, params: Dict[str, Any]) -> str:
+    def get_cache_key(self, files: list, params: Dict[str, Any], data_dir: str = None) -> str:
         """
-        Generate unique cache key from files and parameters.
+        Generate unique cache key from files, parameters, and data directory.
         
         Args:
             files: List of file paths
             params: Dictionary of analysis parameters
+            data_dir: Data directory path (to differentiate between different datasets)
             
         Returns:
             MD5 hash string as cache key
@@ -54,8 +55,8 @@ class ResultsCache:
         # Sort params for consistent hashing
         sorted_params = dict(sorted(params.items()))
         
-        # Create combined string
-        combined = str(sorted_files) + str(sorted_params)
+        # Create combined string including data_dir to differentiate datasets
+        combined = str(data_dir) + str(sorted_files) + str(sorted_params)
         
         # Generate MD5 hash
         key = hashlib.md5(combined.encode()).hexdigest()
@@ -98,7 +99,7 @@ class ResultsCache:
         }
         self._save_metadata()
         
-        print(f"✓ Results cached (key: {key[:8]}...)")
+        print(f"[OK] Results cached (key: {key[:8]}...)")
     
     def load(self, key: str) -> Optional[Any]:
         """
@@ -119,7 +120,7 @@ class ResultsCache:
             with open(cache_file, 'rb') as f:
                 results = pickle.load(f)
             
-            print(f"✓ Results loaded from cache (key: {key[:8]}...)")
+            print(f"[OK] Results loaded from cache (key: {key[:8]}...)")
             return results
         except Exception as e:
             print(f"Error loading cache: {e}")
@@ -133,7 +134,7 @@ class ResultsCache:
         self.metadata = {}
         self._save_metadata()
         
-        print("✓ Cache cleared")
+        print("[OK] Cache cleared")
     
     def get_cache_info(self) -> Dict[str, Any]:
         """

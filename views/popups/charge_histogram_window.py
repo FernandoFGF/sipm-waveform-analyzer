@@ -1,4 +1,4 @@
-"""
+﻿"""
 Charge histogram analysis window.
 """
 import customtkinter as ctk
@@ -297,7 +297,7 @@ def show_charge_histogram(parent, accepted_results, baseline_high):
     
     update_btn = ctk.CTkButton(
         controls_frame,
-        text="🔄 Actualizar",
+        text="[RUNNING] Actualizar",
         command=update_plot,
         width=150,
         height=40,
@@ -506,7 +506,7 @@ def show_charge_histogram(parent, accepted_results, baseline_high):
                 }
                 with open(filepath, 'w') as f:
                     json.dump(data, f, indent=4)
-            print(f"✓ Datos exportados a {filepath}")
+            print(f"[OK] Datos exportados a {filepath}")
         except Exception as e:
             print(f"Error exportando: {e}")
 
