@@ -192,12 +192,13 @@ class MainWindow(ctk.CTk):
         )
     
     def show_advanced_analysis(self):
-        """Show advanced SiPM analysis window (to be implemented in Phase 2)."""
-        print("🔬 Advanced SiPM Analysis - Coming soon in Phase 2!")
-        # TODO: Implement in Phase 2
-        # - Recovery Time analysis
-        # - Jitter Temporal analysis
-        # - Pulse Shape Analysis
+        """Show advanced SiPM analysis window."""
+        from views.popups import show_advanced_sipm_analysis
+        show_advanced_sipm_analysis(
+            self,
+            self.controller.results,
+            self.controller.waveform_data
+        )
     
     def show_signal_processing(self):
         """Show signal processing window."""
