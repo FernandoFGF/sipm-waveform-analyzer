@@ -9,4 +9,6 @@ from .charge_histogram_window import show_charge_histogram
 from .signal_processing_window import show_signal_processing
 from .advanced_sipm_analysis_window import show_advanced_sipm_analysis
 from .comparison_window import show_comparison_window
+from .comparison_config_dialog import show_comparison_config_dialog
+from .tabbed_comparison_window import show_tabbed_comparison_window
 

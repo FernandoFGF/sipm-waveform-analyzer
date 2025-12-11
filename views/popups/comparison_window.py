@@ -12,21 +12,14 @@ from utils import read_data_config
 
 
 class ComparisonWindow(ctk.CTkToplevel):
-    """Window for comparing two datasets."""
+    """Window for comparing two datasets with waveform visualization."""
     
     def __init__(self, parent, current_controller, current_data_dir):
-        """
-        Initialize comparison window.
-        
-        Args:
-            parent: Parent window
-            current_controller: Current analysis controller (Dataset 1)
-            current_data_dir: Current data directory path
-        """
+        """Initialize comparison window."""
         super().__init__(parent)
         
         self.title("Comparador de Datasets")
-        self.geometry("1400x900")
+        self.geometry("1600x1000")
         
         # Make window stay on top and grab focus
         self.transient(parent)
@@ -38,199 +31,144 @@ class ComparisonWindow(ctk.CTkToplevel):
         self.controller2 = None
         self.data_dir2 = None
         
+        # Current indices for waveform navigation
+        self.current_idx1 = 0
+        self.current_idx2 = 0
+        self.current_category = "accepted"
+        
         # Configure grid
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(1, weight=1)
+        self.grid_rowconfigure(0, weight=0)  # Header
+        self.grid_rowconfigure(1, weight=0)  # Stats
+        self.grid_rowconfigure(2, weight=1)  # Waveforms
+        self.grid_rowconfigure(3, weight=0)  # Navigation
         
-        # Create header with dataset selectors
+        # Create UI
         self._create_header()
+        self._create_stats_section()
+        self._create_waveform_area()
+        self._create_navigation()
         
-        # Create main comparison area
-        self._create_comparison_area()
-        
-        # Update display with current dataset
+        # Update display
         self._update_display()
-        
-        # Focus the window
         self.focus()
     
     def _create_header(self):
-        """Create header with dataset information and controls."""
+        """Create header with dataset selectors."""
         header_frame = ctk.CTkFrame(self, fg_color="transparent")
         header_frame.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
         
-        # Configure columns
         header_frame.grid_columnconfigure(0, weight=1)
         header_frame.grid_columnconfigure(1, weight=1)
         
-        # Dataset 1 info
-        dataset1_frame = ctk.CTkFrame(header_frame)
-        dataset1_frame.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
+        # Dataset 1
+        ds1_frame = ctk.CTkFrame(header_frame)
+        ds1_frame.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
         
-        ctk.CTkLabel(
-            dataset1_frame,
-            text="📊 Dataset 1",
-            font=ctk.CTkFont(size=16, weight="bold")
-        ).pack(pady=5)
-        
-        self.dataset1_label = ctk.CTkLabel(
-            dataset1_frame,
-            text=self.data_dir1.name,
-            font=ctk.CTkFont(size=12)
-        )
+        ctk.CTkLabel(ds1_frame, text="📊 Dataset 1", font=ctk.CTkFont(size=16, weight="bold")).pack(pady=5)
+        self.dataset1_label = ctk.CTkLabel(ds1_frame, text=self.data_dir1.name, font=ctk.CTkFont(size=12))
         self.dataset1_label.pack(pady=5)
         
-        # Dataset 2 info and selector
-        dataset2_frame = ctk.CTkFrame(header_frame)
-        dataset2_frame.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+        # Dataset 2
+        ds2_frame = ctk.CTkFrame(header_frame)
+        ds2_frame.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
         
-        ctk.CTkLabel(
-            dataset2_frame,
-            text="📊 Dataset 2",
-            font=ctk.CTkFont(size=16, weight="bold")
-        ).pack(pady=5)
-        
-        self.dataset2_label = ctk.CTkLabel(
-            dataset2_frame,
-            text="No seleccionado",
-            font=ctk.CTkFont(size=12),
-            text_color="gray"
-        )
+        ctk.CTkLabel(ds2_frame, text="📊 Dataset 2", font=ctk.CTkFont(size=16, weight="bold")).pack(pady=5)
+        self.dataset2_label = ctk.CTkLabel(ds2_frame, text="No seleccionado", font=ctk.CTkFont(size=12), text_color="gray")
         self.dataset2_label.pack(pady=5)
         
         self.btn_select_dataset2 = ctk.CTkButton(
-            dataset2_frame,
-            text="Seleccionar Dataset 2",
+            ds2_frame, text="Seleccionar Dataset 2",
             command=self._select_dataset2,
-            fg_color="#3498db",
-            hover_color="#2980b9"
+            fg_color="#3498db", hover_color="#2980b9"
         )
         self.btn_select_dataset2.pack(pady=5)
     
-    def _create_comparison_area(self):
-        """Create main comparison area with statistics and plots."""
-        # Main container
-        main_frame = ctk.CTkFrame(self)
-        main_frame.grid(row=1, column=0, padx=10, pady=10, sticky="nsew")
+    def _create_stats_section(self):
+        """Create compact statistics comparison."""
+        stats_frame = ctk.CTkFrame(self)
+        stats_frame.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
         
-        # Configure grid
-        main_frame.grid_columnconfigure(0, weight=1)
-        main_frame.grid_rowconfigure(0, weight=1)
-        main_frame.grid_rowconfigure(1, weight=2)
+        # Configure grid for 3 columns of stats
+        for i in range(6):
+            stats_frame.grid_columnconfigure(i, weight=1)
         
-        # Statistics comparison table
-        self.stats_frame = ctk.CTkFrame(main_frame)
-        self.stats_frame.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
-        
-        self._create_stats_table()
-        
-        # Plots area
-        plots_frame = ctk.CTkFrame(main_frame)
-        plots_frame.grid(row=1, column=0, padx=5, pady=5, sticky="nsew")
-        
-        # Configure plots grid
-        plots_frame.grid_columnconfigure(0, weight=1)
-        plots_frame.grid_columnconfigure(1, weight=1)
-        plots_frame.grid_rowconfigure(0, weight=1)
-        
-        # Create matplotlib figures
-        self._create_plots(plots_frame)
-    
-    def _create_stats_table(self):
-        """Create statistics comparison table."""
-        # Title
-        ctk.CTkLabel(
-            self.stats_frame,
-            text="Comparación de Estadísticas",
-            font=ctk.CTkFont(size=14, weight="bold")
-        ).grid(row=0, column=0, columnspan=4, pady=10)
-        
-        # Headers
-        headers = ["Métrica", "Dataset 1", "Dataset 2", "Diferencia"]
-        for col, header in enumerate(headers):
-            ctk.CTkLabel(
-                self.stats_frame,
-                text=header,
-                font=ctk.CTkFont(size=12, weight="bold")
-            ).grid(row=1, column=col, padx=10, pady=5)
-        
-        # Store labels for updating
+        # Create stat labels
         self.stat_labels = {}
+        metrics = ["Aceptados", "Rechazados", "Afterpulses", "Total Picos", "Baseline (mV)", "Total Archivos"]
         
-        # Metrics to compare
-        metrics = [
-            "Total Archivos",
-            "Aceptados",
-            "Rechazados",
-            "Afterpulses",
-            "Total Picos",
-            "Baseline (mV)"
-        ]
-        
-        for row, metric in enumerate(metrics, start=2):
+        for idx, metric in enumerate(metrics):
+            col = idx
+            
             # Metric name
-            ctk.CTkLabel(
-                self.stats_frame,
-                text=metric,
-                font=ctk.CTkFont(size=11)
-            ).grid(row=row, column=0, padx=10, pady=3, sticky="w")
-            
-            # Dataset 1 value
-            label1 = ctk.CTkLabel(
-                self.stats_frame,
-                text="-",
-                font=ctk.CTkFont(size=11)
+            ctk.CTkLabel(stats_frame, text=metric, font=ctk.CTkFont(size=10, weight="bold")).grid(
+                row=0, column=col, padx=5, pady=2
             )
-            label1.grid(row=row, column=1, padx=10, pady=3)
             
-            # Dataset 2 value
-            label2 = ctk.CTkLabel(
-                self.stats_frame,
-                text="-",
-                font=ctk.CTkFont(size=11),
-                text_color="gray"
-            )
-            label2.grid(row=row, column=2, padx=10, pady=3)
+            # DS1 value
+            label1 = ctk.CTkLabel(stats_frame, text="-", font=ctk.CTkFont(size=10), text_color="#3498db")
+            label1.grid(row=1, column=col, padx=5, pady=2)
             
-            # Difference
-            label_diff = ctk.CTkLabel(
-                self.stats_frame,
-                text="-",
-                font=ctk.CTkFont(size=11),
-                text_color="gray"
-            )
-            label_diff.grid(row=row, column=3, padx=10, pady=3)
+            # DS2 value
+            label2 = ctk.CTkLabel(stats_frame, text="-", font=ctk.CTkFont(size=10), text_color="#e74c3c")
+            label2.grid(row=2, column=col, padx=5, pady=2)
             
-            self.stat_labels[metric] = {
-                'dataset1': label1,
-                'dataset2': label2,
-                'diff': label_diff
-            }
+            self.stat_labels[metric] = {'ds1': label1, 'ds2': label2}
     
-    def _create_plots(self, parent):
-        """Create comparison plots."""
-        # Left plot: Bar chart comparison
-        self.fig_bars = plt.Figure(figsize=(6, 4), dpi=100)
-        self.ax_bars = self.fig_bars.add_subplot(111)
-        self.fig_bars.subplots_adjust(left=0.15, right=0.95, top=0.9, bottom=0.15)
+    def _create_waveform_area(self):
+        """Create waveform comparison plots."""
+        wf_frame = ctk.CTkFrame(self)
+        wf_frame.grid(row=2, column=0, padx=10, pady=5, sticky="nsew")
         
-        self.canvas_bars = FigureCanvasTkAgg(self.fig_bars, master=parent)
-        self.canvas_bars.get_tk_widget().grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        wf_frame.grid_columnconfigure(0, weight=1)
+        wf_frame.grid_columnconfigure(1, weight=1)
+        wf_frame.grid_rowconfigure(0, weight=1)
         
-        # Right plot: Amplitude distribution comparison
-        self.fig_dist = plt.Figure(figsize=(6, 4), dpi=100)
-        self.ax_dist = self.fig_dist.add_subplot(111)
-        self.fig_dist.subplots_adjust(left=0.15, right=0.95, top=0.9, bottom=0.15)
+        # Dataset 1 waveform
+        self.fig1 = plt.Figure(figsize=(7, 5), dpi=100)
+        self.ax1 = self.fig1.add_subplot(111)
+        self.fig1.subplots_adjust(left=0.1, right=0.95, top=0.92, bottom=0.1)
         
-        self.canvas_dist = FigureCanvasTkAgg(self.fig_dist, master=parent)
-        self.canvas_dist.get_tk_widget().grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
+        self.canvas1 = FigureCanvasTkAgg(self.fig1, master=wf_frame)
+        self.canvas1.get_tk_widget().grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        
+        # Dataset 2 waveform
+        self.fig2 = plt.Figure(figsize=(7, 5), dpi=100)
+        self.ax2 = self.fig2.add_subplot(111)
+        self.fig2.subplots_adjust(left=0.1, right=0.95, top=0.92, bottom=0.1)
+        
+        self.canvas2 = FigureCanvasTkAgg(self.fig2, master=wf_frame)
+        self.canvas2.get_tk_widget().grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
+    
+    def _create_navigation(self):
+        """Create navigation controls."""
+        nav_frame = ctk.CTkFrame(self, fg_color="transparent")
+        nav_frame.grid(row=3, column=0, padx=10, pady=10, sticky="ew")
+        
+        # Category selector
+        ctk.CTkLabel(nav_frame, text="Categoría:", font=ctk.CTkFont(size=12)).pack(side="left", padx=5)
+        
+        self.category_var = ctk.StringVar(value="accepted")
+        category_menu = ctk.CTkOptionMenu(
+            nav_frame,
+            values=["Aceptados", "Rechazados", "Afterpulses"],
+            command=self._on_category_change,
+            variable=self.category_var
+        )
+        category_menu.pack(side="left", padx=5)
+        
+        # Navigation buttons
+        ctk.CTkButton(nav_frame, text="← Anterior", command=self._prev_waveform, width=100).pack(side="left", padx=5)
+        ctk.CTkButton(nav_frame, text="Siguiente →", command=self._next_waveform, width=100).pack(side="left", padx=5)
+        
+        # Info label
+        self.info_label = ctk.CTkLabel(nav_frame, text="", font=ctk.CTkFont(size=11))
+        self.info_label.pack(side="left", padx=20)
     
     def _select_dataset2(self):
-        """Open dialog to select second dataset."""
-        # Import here to avoid circular import
+        """Select second dataset."""
         from controllers.analysis_controller import AnalysisController
         
-        # Ask user to select directory
         selected_dir = filedialog.askdirectory(
             title="Seleccionar Dataset 2",
             initialdir=str(self.data_dir1.parent)
@@ -241,12 +179,11 @@ class ComparisonWindow(ctk.CTkToplevel):
         
         self.data_dir2 = Path(selected_dir)
         
-        # Load configuration from DATA.txt
+        # Load config
         import config
         data_config = read_data_config(self.data_dir2)
         
         if data_config:
-            # Temporarily update config for loading
             old_window_time = config.WINDOW_TIME
             old_trigger = config.TRIGGER_VOLTAGE
             old_num_points = config.NUM_POINTS
@@ -260,11 +197,10 @@ class ComparisonWindow(ctk.CTkToplevel):
                 config.NUM_POINTS = data_config['num_points']
                 config.SAMPLE_TIME = config.WINDOW_TIME / config.NUM_POINTS
         
-        # Create controller for dataset 2
+        # Create controller
         self.controller2 = AnalysisController(data_dir=self.data_dir2)
         self.controller2.load_data()
         
-        # Run analysis with same parameters as dataset 1
         params = {
             'prominence_pct': 2.0,
             'width_time': 0.2e-6,
@@ -275,169 +211,152 @@ class ComparisonWindow(ctk.CTkToplevel):
         }
         self.controller2.run_analysis(**params)
         
-        # Restore original config
+        # Restore config
         if data_config:
             config.WINDOW_TIME = old_window_time
             config.TRIGGER_VOLTAGE = old_trigger
             config.NUM_POINTS = old_num_points
             config.SAMPLE_TIME = old_sample_time
         
-        # Update display
         self.dataset2_label.configure(text=self.data_dir2.name, text_color="white")
+        self.current_idx2 = 0
         self._update_display()
     
+    def _on_category_change(self, choice):
+        """Handle category change."""
+        category_map = {"Aceptados": "accepted", "Rechazados": "rejected", "Afterpulses": "afterpulse"}
+        self.current_category = category_map[choice]
+        self.current_idx1 = 0
+        self.current_idx2 = 0
+        self._update_display()
+    
+    def _next_waveform(self):
+        """Navigate to next waveform."""
+        results1 = self.controller1.get_results_for_category(self.current_category)
+        if results1 and self.current_idx1 < len(results1) - 1:
+            self.current_idx1 += 1
+        
+        if self.controller2:
+            results2 = self.controller2.get_results_for_category(self.current_category)
+            if results2 and self.current_idx2 < len(results2) - 1:
+                self.current_idx2 += 1
+        
+        self._update_waveforms()
+    
+    def _prev_waveform(self):
+        """Navigate to previous waveform."""
+        if self.current_idx1 > 0:
+            self.current_idx1 -= 1
+        
+        if self.controller2 and self.current_idx2 > 0:
+            self.current_idx2 -= 1
+        
+        self._update_waveforms()
+    
     def _update_display(self):
-        """Update all statistics and plots."""
+        """Update all displays."""
         self._update_statistics()
-        self._update_plots()
+        self._update_waveforms()
     
     def _update_statistics(self):
-        """Update statistics comparison table."""
-        # Get stats from dataset 1
+        """Update statistics."""
         results1 = self.controller1.results
         
         stats1 = {
-            "Total Archivos": self.controller1.waveform_data.get_file_count(),
             "Aceptados": results1.get_accepted_count(),
             "Rechazados": results1.get_rejected_count(),
             "Afterpulses": results1.get_afterpulse_count(),
             "Total Picos": results1.total_peaks,
-            "Baseline (mV)": (results1.baseline_high - results1.baseline_low) * 1000
+            "Baseline (mV)": (results1.baseline_high - results1.baseline_low) * 1000,
+            "Total Archivos": self.controller1.waveform_data.get_file_count()
         }
         
-        # Update dataset 1 labels
         for metric, value in stats1.items():
             if metric == "Baseline (mV)":
-                self.stat_labels[metric]['dataset1'].configure(text=f"{value:.2f}")
+                self.stat_labels[metric]['ds1'].configure(text=f"{value:.2f}")
             else:
-                self.stat_labels[metric]['dataset1'].configure(text=str(value))
+                self.stat_labels[metric]['ds1'].configure(text=str(value))
         
-        # Update dataset 2 if available
         if self.controller2:
             results2 = self.controller2.results
-            
             stats2 = {
-                "Total Archivos": self.controller2.waveform_data.get_file_count(),
                 "Aceptados": results2.get_accepted_count(),
                 "Rechazados": results2.get_rejected_count(),
                 "Afterpulses": results2.get_afterpulse_count(),
                 "Total Picos": results2.total_peaks,
-                "Baseline (mV)": (results2.baseline_high - results2.baseline_low) * 1000
+                "Baseline (mV)": (results2.baseline_high - results2.baseline_low) * 1000,
+                "Total Archivos": self.controller2.waveform_data.get_file_count()
             }
             
-            # Update dataset 2 labels and calculate differences
-            for metric in stats1.keys():
-                val1 = stats1[metric]
-                val2 = stats2[metric]
-                
-                # Update value
+            for metric, value in stats2.items():
                 if metric == "Baseline (mV)":
-                    self.stat_labels[metric]['dataset2'].configure(
-                        text=f"{val2:.2f}",
-                        text_color="white"
-                    )
+                    self.stat_labels[metric]['ds2'].configure(text=f"{value:.2f}")
                 else:
-                    self.stat_labels[metric]['dataset2'].configure(
-                        text=str(val2),
-                        text_color="white"
-                    )
-                
-                # Calculate difference
-                if val1 != 0:
-                    diff_pct = ((val2 - val1) / val1) * 100
-                    diff_text = f"{diff_pct:+.1f}%"
-                    
-                    # Color based on difference
-                    if abs(diff_pct) < 5:
-                        color = "gray"
-                    elif diff_pct > 0:
-                        color = "#2ecc71"  # Green for positive
-                    else:
-                        color = "#e74c3c"  # Red for negative
-                    
-                    self.stat_labels[metric]['diff'].configure(
-                        text=diff_text,
-                        text_color=color
-                    )
-                else:
-                    self.stat_labels[metric]['diff'].configure(text="N/A")
+                    self.stat_labels[metric]['ds2'].configure(text=str(value))
     
-    def _update_plots(self):
-        """Update comparison plots."""
+    def _update_waveforms(self):
+        """Update waveform plots."""
+        from config import WINDOW_TIME, SAMPLE_TIME
+        
         # Clear plots
-        self.ax_bars.clear()
-        self.ax_dist.clear()
+        self.ax1.clear()
+        self.ax2.clear()
         
-        # Bar chart comparison
-        categories = ['Aceptados', 'Rechazados', 'Afterpulses']
+        # Plot dataset 1
+        results1 = self.controller1.get_results_for_category(self.current_category)
+        if results1:
+            result1 = results1[self.current_idx1]
+            t_axis = (np.arange(len(result1.amplitudes)) * SAMPLE_TIME - WINDOW_TIME/2) * 1e6
+            
+            self.ax1.plot(t_axis, result1.amplitudes * 1000, color='#3498db', linewidth=1)
+            
+            # Convert peaks to int for indexing
+            peak_indices = result1.peaks.astype(int) if hasattr(result1.peaks, 'astype') else np.array(result1.peaks, dtype=int)
+            self.ax1.plot(t_axis[peak_indices], result1.amplitudes[peak_indices] * 1000, 
+                         'o', color='white', markeredgecolor='black', markersize=6)
+            
+            self.ax1.set_title(f"DS1: {result1.filename} ({len(result1.peaks)} picos)", fontsize=10)
+            self.ax1.set_xlabel("Tiempo (µs)", fontsize=9)
+            self.ax1.set_ylabel("Amplitud (mV)", fontsize=9)
+            self.ax1.grid(True, alpha=0.3)
         
-        results1 = self.controller1.results
-        values1 = [
-            results1.get_accepted_count(),
-            results1.get_rejected_count(),
-            results1.get_afterpulse_count()
-        ]
-        
-        x = np.arange(len(categories))
-        width = 0.35
-        
-        bars1 = self.ax_bars.bar(x - width/2, values1, width, label=self.data_dir1.name, color='#3498db')
-        
+        # Plot dataset 2
         if self.controller2:
-            results2 = self.controller2.results
-            values2 = [
-                results2.get_accepted_count(),
-                results2.get_rejected_count(),
-                results2.get_afterpulse_count()
-            ]
-            bars2 = self.ax_bars.bar(x + width/2, values2, width, label=self.data_dir2.name, color='#e74c3c')
+            results2 = self.controller2.get_results_for_category(self.current_category)
+            if results2:
+                result2 = results2[self.current_idx2]
+                t_axis = (np.arange(len(result2.amplitudes)) * SAMPLE_TIME - WINDOW_TIME/2) * 1e6
+                
+                self.ax2.plot(t_axis, result2.amplitudes * 1000, color='#e74c3c', linewidth=1)
+                
+                # Convert peaks to int for indexing
+                peak_indices = result2.peaks.astype(int) if hasattr(result2.peaks, 'astype') else np.array(result2.peaks, dtype=int)
+                self.ax2.plot(t_axis[peak_indices], result2.amplitudes[peak_indices] * 1000,
+                             'o', color='white', markeredgecolor='black', markersize=6)
+                
+                self.ax2.set_title(f"DS2: {result2.filename} ({len(result2.peaks)} picos)", fontsize=10)
+                self.ax2.set_xlabel("Tiempo (µs)", fontsize=9)
+                self.ax2.set_ylabel("Amplitud (mV)", fontsize=9)
+                self.ax2.grid(True, alpha=0.3)
         
-        self.ax_bars.set_xlabel('Categoría')
-        self.ax_bars.set_ylabel('Cantidad')
-        self.ax_bars.set_title('Comparación de Categorías')
-        self.ax_bars.set_xticks(x)
-        self.ax_bars.set_xticklabels(categories)
-        self.ax_bars.legend()
-        self.ax_bars.grid(True, alpha=0.3)
+        self.canvas1.draw()
+        self.canvas2.draw()
         
-        # Amplitude distribution comparison
-        if self.controller1.waveform_data.all_amplitudes_flat.size > 0:
-            self.ax_dist.hist(
-                self.controller1.waveform_data.all_amplitudes_flat * 1000,
-                bins=50,
-                alpha=0.6,
-                label=self.data_dir1.name,
-                color='#3498db'
-            )
-        
-        if self.controller2 and self.controller2.waveform_data.all_amplitudes_flat.size > 0:
-            self.ax_dist.hist(
-                self.controller2.waveform_data.all_amplitudes_flat * 1000,
-                bins=50,
-                alpha=0.6,
-                label=self.data_dir2.name,
-                color='#e74c3c'
-            )
-        
-        self.ax_dist.set_xlabel('Amplitud (mV)')
-        self.ax_dist.set_ylabel('Frecuencia')
-        self.ax_dist.set_title('Distribución de Amplitudes')
-        self.ax_dist.legend()
-        self.ax_dist.grid(True, alpha=0.3)
-        
-        # Redraw canvases
-        self.canvas_bars.draw()
-        self.canvas_dist.draw()
+        # Update info
+        if results1:
+            total1 = len(results1)
+            info_text = f"DS1: {self.current_idx1 + 1}/{total1}"
+            
+            if self.controller2:
+                results2 = self.controller2.get_results_for_category(self.current_category)
+                if results2:
+                    total2 = len(results2)
+                    info_text += f"  |  DS2: {self.current_idx2 + 1}/{total2}"
+            
+            self.info_label.configure(text=info_text)
 
 
 def show_comparison_window(parent, controller, data_dir):
-    """
-    Show comparison window.
-    
-    Args:
-        parent: Parent window
-        controller: Current analysis controller
-        data_dir: Current data directory
-    """
+    """Show comparison window."""
     window = ComparisonWindow(parent, controller, data_dir)
     window.focus()

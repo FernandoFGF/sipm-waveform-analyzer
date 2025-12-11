@@ -415,6 +415,8 @@ class MainWindow(ctk.CTk):
         json_btn.pack(side="left", padx=10)
         
         # Wait for dialog to close
+        self.settings_window = None
+        self.comparison_cache = {}  # Cache for comparison controllers: {path: controller}
         self.wait_window(format_dialog)
         
         if not selected_format[0]:
@@ -463,6 +465,9 @@ class MainWindow(ctk.CTk):
         import config
         self.controller = AnalysisController(data_dir=config.DATA_DIR)
         
+        # Clear cache when main directory changes to free memory or avoid conflicts
+        self.comparison_cache = {}
+        
         # Load data from new directory
         self.controller.load_data()
         
@@ -472,8 +477,77 @@ class MainWindow(ctk.CTk):
         print("✓ Datos recargados y análisis completado")
     
     def open_comparison_window(self):
-        """Open comparison window for comparing datasets."""
-        from views.popups import show_comparison_window
+        """Open comparison configuration and then tabbed comparison window."""
+        from views.popups import show_comparison_config_dialog, show_tabbed_comparison_window
+        from controllers.analysis_controller import AnalysisController
+        from utils import read_data_config
         import config
         
-        show_comparison_window(self, self.controller, config.DATA_DIR)
+        # Show configuration dialog
+        result = show_comparison_config_dialog(self, config.DATA_DIR)
+        
+        if not result:
+            return  # User cancelled
+        
+        # Ensure cache exists (for hot-reloading stability)
+        if not hasattr(self, 'comparison_cache'):
+            self.comparison_cache = {}
+            
+        dataset2_path, selected_options = result
+        
+        # Check cache
+        if dataset2_path in self.comparison_cache:
+            print(f"Usando controlador en caché para: {dataset2_path}")
+            controller2 = self.comparison_cache[dataset2_path]
+        else:
+            print(f"Cargando y analizando Dataset 2: {dataset2_path}")
+            # Configure temp params
+            data_config = read_data_config(dataset2_path)
+            old_window_time = config.WINDOW_TIME
+            old_trigger = config.TRIGGER_VOLTAGE
+            old_num_points = config.NUM_POINTS
+            old_sample_time = config.SAMPLE_TIME
+            
+            # Update config temporarily
+            if data_config:
+                if 'window_time' in data_config:
+                    config.WINDOW_TIME = data_config['window_time']
+                if 'trigger_voltage' in data_config:
+                    config.TRIGGER_VOLTAGE = data_config['trigger_voltage']
+                if 'num_points' in data_config:
+                    config.NUM_POINTS = data_config['num_points']
+                    config.SAMPLE_TIME = config.WINDOW_TIME / config.NUM_POINTS
+            
+            # Create controller for dataset 2
+            controller2 = AnalysisController(data_dir=dataset2_path)
+            controller2.load_data()
+            
+            # Run analysis with same parameters
+            params = {
+                'prominence_pct': 2.0,
+                'width_time': 0.2e-6,
+                'min_dist_time': 0.05e-6,
+                'baseline_pct': 85.0,
+                'max_dist_pct': 99.0,
+                'afterpulse_pct': 80.0
+            }
+            controller2.run_analysis(**params)
+            
+            # Cache the controller
+            self.comparison_cache[dataset2_path] = controller2
+            
+            # Restore original config
+            config.WINDOW_TIME = old_window_time
+            config.TRIGGER_VOLTAGE = old_trigger
+            config.NUM_POINTS = old_num_points
+            config.SAMPLE_TIME = old_sample_time
+        
+        # Show tabbed comparison window
+        show_tabbed_comparison_window(
+            self, 
+            self.controller, 
+            config.DATA_DIR,
+            controller2,
+            dataset2_path,
+            selected_options
+        )
