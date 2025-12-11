@@ -27,12 +27,13 @@ class WaveformData:
         self.all_amplitudes_flat = np.array([])
         self.all_max_times = []
         
-    def load_files(self, pattern: str = None) -> int:
+    def load_files(self, pattern: str = None, progress_callback=None) -> int:
         """
         Load waveform files from directory.
         
         Args:
             pattern: Glob pattern for file matching (if None, uses directory name)
+            progress_callback: Optional callback(current, total, message) for progress updates
             
         Returns:
             Number of files loaded
@@ -46,11 +47,11 @@ class WaveformData:
         print(f"Loaded {len(self.waveform_files)} files using pattern: {pattern}")
         
         if self.waveform_files:
-            self._calculate_global_statistics()
+            self._calculate_global_statistics(progress_callback)
         
         return len(self.waveform_files)
     
-    def _calculate_global_statistics(self):
+    def _calculate_global_statistics(self, progress_callback=None):
         """Calculate global amplitude ranges and statistics."""
         print("Calculating global scale, baseline and maxima...")
         
@@ -59,7 +60,9 @@ class WaveformData:
         all_data_list = []
         self.all_max_times = []
         
-        for wf_file in self.waveform_files:
+        total_files = len(self.waveform_files)
+        
+        for i, wf_file in enumerate(self.waveform_files):
             try:
                 t_half, amplitudes = read_waveform_file(wf_file)
                 
@@ -74,6 +77,11 @@ class WaveformData:
                 max_idx = np.argmax(amplitudes)
                 time_rel = (max_idx * original_sample_time) - (WINDOW_TIME / 2)
                 self.all_max_times.append(time_rel)
+                
+                # Update progress every 100 files
+                if progress_callback and (i % 100 == 0 or i == total_files - 1):
+                    progress_callback(i + 1, total_files, f"Cargando datos")
+                    
             except WaveformError as e:
                 print(f"Skipping {wf_file}: {e}")
             except Exception as e:

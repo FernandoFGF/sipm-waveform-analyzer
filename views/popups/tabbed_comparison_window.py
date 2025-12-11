@@ -30,14 +30,26 @@ class TabbedComparisonWindow(ctk.CTkToplevel):
         
         # Configure grid
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(0, weight=1)
+        self.grid_rowconfigure(0, weight=0)  # Progress frame
+        self.grid_rowconfigure(1, weight=1)  # Tabview
+        
+        # Create progress frame (initially hidden)
+        self.progress_frame = ctk.CTkFrame(self)
+        self.progress_label = ctk.CTkLabel(self.progress_frame, text="")
+        self.progress_bar = ctk.CTkProgressBar(self.progress_frame, mode="determinate")
         
         # Create tabview
         self.tabview = ctk.CTkTabview(self)
-        self.tabview.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
+        self.tabview.grid(row=1, column=0, padx=10, pady=10, sticky="nsew")
         
-        # Create tabs based on selected options
-        self._create_tabs()
+        # Show progress and create tabs
+        from utils.performance_logger import get_perf_logger
+        perf_logger = get_perf_logger()
+        
+        with perf_logger.measure("Load Comparison Window", {"dir1": data_dir1.name, "dir2": data_dir2.name}):
+            self._show_progress("Creando pestañas de comparación...")
+            self._create_tabs()
+            self._hide_progress()
         
         self.focus()
     
@@ -410,7 +422,12 @@ class TabbedComparisonWindow(ctk.CTkToplevel):
             
             if target_pct != self.wf_percentage:
                 self.wf_percentage = target_pct
-                slider_label.configure(text=f"Muestreo: {int(self.wf_percentage*100)}%")
+                
+                # Show loading indicator
+                original_text = slider_label.cget("text")
+                slider_label.configure(text="⏳ Recargando...")
+                slider.configure(state="disabled")
+                self.update()
                 
                 # Force recreation of plots
                 canvas_refs['overlay'] = None
@@ -421,6 +438,11 @@ class TabbedComparisonWindow(ctk.CTkToplevel):
                     widget.destroy()
                 
                 update_view()
+                
+                # Hide loading indicator
+                slider_label.configure(text=f"Muestreo: {int(self.wf_percentage*100)}%")
+                slider.configure(state="normal")
+
 
         def show_overlay():
             """Show overlay view (side-by-side local time)."""
@@ -581,6 +603,28 @@ class TabbedComparisonWindow(ctk.CTkToplevel):
         
         # Initial View
         create_overlay_view()
+    
+    def _show_progress(self, message: str):
+        """Show progress bar with message."""
+        self.progress_label.configure(text=message)
+        self.progress_frame.grid(row=0, column=0, padx=10, pady=5, sticky="ew")
+        self.progress_label.pack(side="left", padx=10)
+        self.progress_bar.pack(side="left", fill="x", expand=True, padx=10)
+        self.progress_bar.set(0)
+        self.update()
+    
+    def _update_progress(self, current: int, total: int, message: str):
+        """Update progress bar."""
+        if total > 0:
+            progress = current / total
+            self.progress_bar.set(progress)
+            self.progress_label.configure(text=f"{message} ({int(progress*100)}%)")
+            self.update()
+    
+    def _hide_progress(self):
+        """Hide progress bar."""
+        self.progress_bar.set(0)
+        self.progress_frame.grid_forget()
 
 
 def show_tabbed_comparison_window(parent, controller1, data_dir1, controller2, data_dir2, selected_options):

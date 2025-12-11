@@ -14,7 +14,7 @@ from views.control_sidebar import ControlSidebar
 from views.plot_panel import PlotPanel
 from views.peak_info_panel import PeakInfoPanel
 from views.popups import show_temporal_distribution, show_all_waveforms, show_charge_histogram
-from utils import ResultsExporter
+from utils import ResultsExporter, get_perf_logger
 
 
 class MainWindow(ctk.CTk):
@@ -39,6 +39,7 @@ class MainWindow(ctk.CTk):
         # Create sidebar
         self.sidebar = ControlSidebar(
             self,
+            self.controller,  # Pass controller reference
             on_update_analysis=self.run_analysis,
             on_show_temporal_dist=self.show_temporal_distribution,
             on_show_all_waveforms=self.show_all_waveforms,
@@ -124,15 +125,32 @@ class MainWindow(ctk.CTk):
         self.info_panel.set_hide_callback(self.hide_peak_info)
         # Panel will be shown in column 3 when needed
         
+        # Create progress bar (initially hidden)
+        self.progress_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.progress_label = ctk.CTkLabel(
+            self.progress_frame,
+            text="Cargando...",
+            font=ctk.CTkFont(size=12)
+        )
+        self.progress_bar = ctk.CTkProgressBar(self.progress_frame, mode="indeterminate")
+        
         # Save initial DATA_DIR as last opened
         from utils import get_config
         import config
         config_manager = get_config()
         config_manager.save_last_data_dir(str(config.DATA_DIR))
         
-        # Load data and run initial analysis
-        self.controller.load_data()
+        # Initialize performance logger
+        self.perf_logger = get_perf_logger()
+        
+        # Load data and run initial analysis with progress tracking
+        self._show_progress("Cargando datos...")
+        self.controller.load_data(progress_callback=self._update_progress)
         self.run_analysis()
+        self._hide_progress()
+        
+        # Setup close handler to save performance log
+        self.protocol("WM_DELETE_WINDOW", self._on_closing)
     
     def run_analysis(self):
         """Run analysis with current parameters."""
@@ -162,6 +180,60 @@ class MainWindow(ctk.CTk):
         self.update_plot("rejected")
         self.update_plot("afterpulse")
         self.update_plot("favorites")
+    
+    def _show_progress(self, message: str):
+        """Show progress bar with message."""
+        self.progress_label.configure(text=message)
+        self.progress_frame.grid(row=2, column=0, columnspan=3, padx=10, pady=5, sticky="ew")
+        self.progress_label.pack(side="left", padx=10)
+        self.progress_bar.pack(side="left", fill="x", expand=True, padx=10)
+        self.progress_bar.set(0)  # Start at 0%
+        self.update()  # Force UI update
+    
+    def _update_progress(self, current: int, total: int, message: str):
+        """Update progress bar with current progress."""
+        if total > 0:
+            progress = current / total
+            self.progress_bar.set(progress)
+            self.progress_label.configure(text=f"{message} ({int(progress*100)}%)")
+            self.update()  # Force UI update
+    
+    def _hide_progress(self):
+        """Hide progress bar."""
+        self.progress_bar.set(0)
+        self.progress_frame.grid_forget()
+    
+    def _on_closing(self):
+        """Handle window closing - save performance log."""
+        self.perf_logger.save_session()
+        print(self.perf_logger.get_summary())
+        self.destroy()
+    
+    def _get_original_category(self, filename: str) -> str:
+        """Determine original category of a favorite waveform.
+        
+        Args:
+            filename: Filename of the waveform
+            
+        Returns:
+            Category string: 'accepted', 'rejected', or 'afterpulse'
+        """
+        # Check in accepted
+        for result in self.controller.results.accepted_results:
+            if result.filename == filename:
+                return "accepted"
+        
+        # Check in afterpulse
+        for result in self.controller.results.afterpulse_results:
+            if result.filename == filename:
+                return "afterpulse"
+        
+        # Check in rejected
+        for result in self.controller.results.rejected_results:
+            if result.filename == filename:
+                return "rejected"
+        
+        return "unknown"
     
     def navigate_next(self, category: str):
         """Navigate to next item in category."""
@@ -197,6 +269,20 @@ class MainWindow(ctk.CTk):
         
         # Determine if we should show afterpulse zone
         show_afterpulse = category == "afterpulse"
+        
+        # For favorites, determine original category and update title
+        if category == "favorites":
+            original_category = self._get_original_category(result.filename)
+            category_labels = {
+                "accepted": "✓ Aceptado",
+                "rejected": "✗ Rechazado",
+                "afterpulse": "⚡ Afterpulse"
+            }
+            category_label = category_labels.get(original_category, "")
+            
+            # Update panel title with category indicator
+            total_favs = self.controller.results.get_favorites_count()
+            panel.update_title(f"Favoritos ({idx + 1}/{total_favs}) - {category_label}")
         
         panel.update_plot(
             result=result,
@@ -522,15 +608,8 @@ class MainWindow(ctk.CTk):
             controller2 = AnalysisController(data_dir=dataset2_path)
             controller2.load_data()
             
-            # Run analysis with same parameters
-            params = {
-                'prominence_pct': 2.0,
-                'width_time': 0.2e-6,
-                'min_dist_time': 0.05e-6,
-                'baseline_pct': 85.0,
-                'max_dist_pct': 99.0,
-                'afterpulse_pct': 80.0
-            }
+            # Run analysis with same parameters as current dataset
+            params = self.sidebar.get_parameters()
             controller2.run_analysis(**params)
             
             # Cache the controller
