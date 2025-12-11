@@ -121,15 +121,12 @@ class PeakAnalyzer:
             )
             
             if len(main_candidates) == 0:
-                # Rejected
-                if len(all_peaks) > 1:
-                    results.rejected_afterpulse_results.append(wf_result)
-                else:
-                    results.rejected_results.append(wf_result)
+                # Rejected - no valid peaks in max dist zone
+                results.rejected_results.append(wf_result)
             else:
                 # Accepted or Afterpulse
                 if len(good_peaks) > 1:
-                    # Afterpulse
+                    # Afterpulse - multiple good peaks
                     results.afterpulse_results.append(wf_result)
                     results.total_peaks += len(good_peaks)
                     
@@ -277,7 +274,11 @@ class PeakAnalyzer:
         
         # Need to recreate WaveformData instance for each process
         from models.waveform_data import WaveformData
+        from config import SAMPLE_TIME
         waveform_data = WaveformData()
+        
+        # Dictionary to track rejection reasons
+        rejection_reasons = {}
         
         # Read file
         t_half, amplitudes = waveform_data.read_waveform_file(wf_file)
@@ -292,6 +293,7 @@ class PeakAnalyzer:
         )
         
         # Handle saturation
+        original_peaks = peaks.copy()
         global_max_amp = np.max(amplitudes) * 1.05  # Approximate
         saturation_threshold = global_max_amp * 0.95
         peak_amps = amplitudes[peaks]
@@ -302,24 +304,44 @@ class PeakAnalyzer:
             max_sat_peak_idx = saturated_indices[np.argmax(peak_amps[saturated_indices])]
             keep_mask = ~saturated_mask
             keep_mask[max_sat_peak_idx] = True
+            
+            # Track rejected saturated peaks
+            kept_peak_idx = peaks[max_sat_peak_idx]
+            for idx in saturated_indices:
+                peak_idx = original_peaks[idx]
+                if not keep_mask[idx]:
+                    rejection_reasons[peak_idx] = "Saturación (pico duplicado fusionado)"
+            
             peaks = peaks[keep_mask]
             for key in properties:
                 if isinstance(properties[key], np.ndarray) and len(properties[key]) == len(keep_mask):
                     properties[key] = properties[key][keep_mask]
         
         # Filter by width
+        peaks_before_width = peaks.copy()
         if 'widths' in properties:
             widths = properties['widths']
             passing_peaks = [p_idx for i, p_idx in enumerate(peaks) if widths[i] >= width_samples]
             peaks_passing_width = np.array(passing_peaks)
+            
+            # Track peaks rejected by width
+            for peak_idx in peaks_before_width:
+                if peak_idx not in peaks_passing_width:
+                    rejection_reasons[peak_idx] = f"Ancho insuficiente (< {width_samples * SAMPLE_TIME * 1e9:.1f} ns)"
         else:
             peaks_passing_width = peaks
         
         # Filter by baseline
+        peaks_before_baseline = peaks_passing_width.copy()
         if len(peaks_passing_width) > 0:
             peak_amps = amplitudes[peaks_passing_width]
             good_peaks = np.array([p_idx for i, p_idx in enumerate(peaks_passing_width) 
                                    if peak_amps[i] > baseline_high])
+            
+            # Track peaks rejected by baseline
+            for peak_idx in peaks_before_baseline:
+                if peak_idx not in good_peaks:
+                    rejection_reasons[peak_idx] = f"Por debajo del baseline ({baseline_high * 1000:.3f} mV)"
         else:
             good_peaks = peaks_passing_width
         
@@ -329,7 +351,8 @@ class PeakAnalyzer:
             amplitudes=amplitudes,
             peaks=good_peaks,
             all_peaks=peaks,
-            properties=properties
+            properties=properties,
+            peak_rejection_reasons=rejection_reasons
         )
     
     def _analyze_single_waveform(
@@ -345,6 +368,9 @@ class PeakAnalyzer:
         """Analyze a single waveform file."""
         t_half, amplitudes = self.waveform_data.read_waveform_file(wf_file)
         
+        # Dictionary to track rejection reasons
+        rejection_reasons = {}
+        
         # Find peaks
         peaks, properties = find_peaks(
             amplitudes,
@@ -355,13 +381,47 @@ class PeakAnalyzer:
         )
         
         # Handle saturation - merge multiple saturated peaks
+        original_peaks = peaks.copy()
         peaks, properties = self._handle_saturation(peaks, properties, amplitudes)
         
+        # Track saturated peaks that were merged
+        if len(original_peaks) != len(peaks):
+            saturation_threshold = self.waveform_data.global_max_amp * 0.95
+            peak_amps = amplitudes[original_peaks]
+            saturated_mask = peak_amps >= saturation_threshold
+            saturated_indices = np.where(saturated_mask)[0]
+            
+            if len(saturated_indices) > 1:
+                # Find which saturated peak was kept
+                kept_peak_idx = None
+                for idx in saturated_indices:
+                    if original_peaks[idx] in peaks:
+                        kept_peak_idx = original_peaks[idx]
+                        break
+                
+                # Mark rejected saturated peaks
+                for idx in saturated_indices:
+                    peak_idx = original_peaks[idx]
+                    if peak_idx != kept_peak_idx:
+                        rejection_reasons[peak_idx] = "Saturación (pico duplicado fusionado)"
+        
         # Filter by width
+        peaks_before_width = peaks.copy()
         peaks_passing_width = self._filter_by_width(peaks, properties, width_samples)
         
+        # Track peaks rejected by width filter
+        for peak_idx in peaks_before_width:
+            if peak_idx not in peaks_passing_width:
+                rejection_reasons[peak_idx] = f"Ancho insuficiente (< {width_samples * SAMPLE_TIME * 1e9:.1f} ns)"
+        
         # Filter by baseline
+        peaks_before_baseline = peaks_passing_width.copy()
         good_peaks = self._filter_by_baseline(peaks_passing_width, amplitudes, baseline_high)
+        
+        # Track peaks rejected by baseline filter
+        for peak_idx in peaks_before_baseline:
+            if peak_idx not in good_peaks:
+                rejection_reasons[peak_idx] = f"Por debajo del baseline ({baseline_high * 1000:.3f} mV)"
         
         return WaveformResult(
             filename=wf_file.name,
@@ -369,7 +429,8 @@ class PeakAnalyzer:
             amplitudes=amplitudes,
             peaks=good_peaks,
             all_peaks=peaks,
-            properties=properties
+            properties=properties,
+            peak_rejection_reasons=rejection_reasons
         )
     
     def _handle_saturation(

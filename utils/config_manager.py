@@ -135,6 +135,25 @@ class ConfigManager:
         self.set('sipm.time_threshold_us', time_us)
         self.save()
     
+    def get_last_data_dir(self) -> Optional[str]:
+        """
+        Get the last opened data directory.
+        
+        Returns:
+            Path to last data directory or None
+        """
+        return self.get('last_data_dir', None)
+    
+    def save_last_data_dir(self, data_dir: str):
+        """
+        Save the last opened data directory.
+        
+        Args:
+            data_dir: Path to data directory
+        """
+        self.set('last_data_dir', str(data_dir))
+        self.save()
+    
     def reset_to_defaults(self):
         """Reset configuration to default values."""
         self.config = {}

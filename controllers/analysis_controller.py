@@ -3,26 +3,35 @@ Analysis controller - orchestrates the analysis workflow.
 """
 from models.waveform_data import WaveformData
 from models.peak_analyzer import PeakAnalyzer
-from models.analysis_results import AnalysisResults
+from models.analysis_results import AnalysisResults, WaveformResult
 from utils.results_cache import ResultsCache
+from utils.favorites_manager import FavoritesManager
 import config
 
 
 class AnalysisController:
     """Coordinates analysis between model and view."""
     
-    def __init__(self):
-        """Initialize the analysis controller."""
-        self.waveform_data = WaveformData()
+    def __init__(self, data_dir=None):
+        """Initialize the analysis controller.
+        
+        Args:
+            data_dir: Data directory path. If None, uses config.DATA_DIR
+        """
+        if data_dir is None:
+            data_dir = config.DATA_DIR
+        
+        self.waveform_data = WaveformData(data_dir)
         self.peak_analyzer = PeakAnalyzer(self.waveform_data)
         self.results = AnalysisResults()
         self.cache = ResultsCache()  # Initialize cache
+        self.favorites_manager = FavoritesManager(data_dir)  # Initialize favorites manager
         
         # Current navigation indices
         self.current_accepted_idx = 0
         self.current_rejected_idx = 0
         self.current_afterpulse_idx = 0
-        self.current_rejected_afterpulse_idx = 0
+        self.current_favorites_idx = 0
     
     def load_data(self) -> int:
         """
@@ -98,7 +107,10 @@ class AnalysisController:
         self.current_accepted_idx = 0
         self.current_rejected_idx = 0
         self.current_afterpulse_idx = 0
-        self.current_rejected_afterpulse_idx = 0
+        self.current_favorites_idx = 0
+        
+        # Populate favorites from saved list
+        self.populate_favorites_from_saved()
         
         return self.results
     
@@ -107,7 +119,7 @@ class AnalysisController:
         Navigate to next item in category.
         
         Args:
-            category: One of 'accepted', 'rejected', 'afterpulse', 'rejected_afterpulse'
+            category: One of 'accepted', 'rejected', 'afterpulse', 'favorites'
             
         Returns:
             True if navigation successful, False if at end
@@ -124,9 +136,9 @@ class AnalysisController:
             if self.current_afterpulse_idx < len(self.results.afterpulse_results) - 1:
                 self.current_afterpulse_idx += 1
                 return True
-        elif category == "rejected_afterpulse":
-            if self.current_rejected_afterpulse_idx < len(self.results.rejected_afterpulse_results) - 1:
-                self.current_rejected_afterpulse_idx += 1
+        elif category == "favorites":
+            if self.current_favorites_idx < len(self.results.favorites_results) - 1:
+                self.current_favorites_idx += 1
                 return True
         return False
     
@@ -135,7 +147,7 @@ class AnalysisController:
         Navigate to previous item in category.
         
         Args:
-            category: One of 'accepted', 'rejected', 'afterpulse', 'rejected_afterpulse'
+            category: One of 'accepted', 'rejected', 'afterpulse', 'favorites'
             
         Returns:
             True if navigation successful, False if at beginning
@@ -152,9 +164,9 @@ class AnalysisController:
             if self.current_afterpulse_idx > 0:
                 self.current_afterpulse_idx -= 1
                 return True
-        elif category == "rejected_afterpulse":
-            if self.current_rejected_afterpulse_idx > 0:
-                self.current_rejected_afterpulse_idx -= 1
+        elif category == "favorites":
+            if self.current_favorites_idx > 0:
+                self.current_favorites_idx -= 1
                 return True
         return False
     
@@ -166,8 +178,8 @@ class AnalysisController:
             return self.current_rejected_idx
         elif category == "afterpulse":
             return self.current_afterpulse_idx
-        elif category == "rejected_afterpulse":
-            return self.current_rejected_afterpulse_idx
+        elif category == "favorites":
+            return self.current_favorites_idx
         return 0
     
     def get_results_for_category(self, category: str) -> list:
@@ -178,6 +190,39 @@ class AnalysisController:
             return self.results.rejected_results
         elif category == "afterpulse":
             return self.results.afterpulse_results
-        elif category == "rejected_afterpulse":
-            return self.results.rejected_afterpulse_results
+        elif category == "favorites":
+            return self.results.favorites_results
         return []
+    
+    def add_to_favorites(self, result: WaveformResult):
+        """Add a waveform to favorites."""
+        self.favorites_manager.add_favorite(result.filename)
+        self.results.add_to_favorites(result)
+    
+    def remove_from_favorites(self, filename: str):
+        """Remove a waveform from favorites."""
+        self.favorites_manager.remove_favorite(filename)
+        self.results.remove_from_favorites(filename)
+        
+        # Adjust current index if it's now out of bounds
+        if self.current_favorites_idx >= len(self.results.favorites_results):
+            self.current_favorites_idx = max(0, len(self.results.favorites_results) - 1)
+    
+    def is_favorite(self, filename: str) -> bool:
+        """Check if a waveform is in favorites."""
+        return self.favorites_manager.is_favorite(filename)
+    
+    def populate_favorites_from_saved(self):
+        """Populate favorites results from saved favorites list."""
+        saved_favorites = self.favorites_manager.get_favorites()
+        
+        # Search for each saved favorite in all result categories
+        all_results = (
+            self.results.accepted_results +
+            self.results.rejected_results +
+            self.results.afterpulse_results
+        )
+        
+        for result in all_results:
+            if result.filename in saved_favorites:
+                self.results.add_to_favorites(result)

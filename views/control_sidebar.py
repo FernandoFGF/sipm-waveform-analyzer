@@ -4,6 +4,7 @@ Control sidebar for parameter adjustment.
 import customtkinter as ctk
 from typing import Callable
 
+import config
 from config import (
     DEFAULT_PROMINENCE_PCT, DEFAULT_WIDTH_TIME, DEFAULT_MIN_DIST_TIME,
     DEFAULT_BASELINE_PCT, DEFAULT_MAX_DIST_PCT, DEFAULT_AFTERPULSE_PCT
@@ -53,13 +54,43 @@ class ControlSidebar(ctk.CTkFrame):
         
         self.grid_rowconfigure(20, weight=1)
         
-        # Logo
-        logo_label = ctk.CTkLabel(
-            self, 
-            text="Peak Finder", 
-            font=ctk.CTkFont(size=20, weight="bold")
+        # Directory selection buttons (replacing logo)
+        dir_button_frame = ctk.CTkFrame(self, fg_color="transparent")
+        dir_button_frame.grid(row=0, column=0, padx=10, pady=(20, 10), sticky="ew")
+        
+        # Configure grid columns to be equal width
+        dir_button_frame.grid_columnconfigure(0, weight=1, uniform="dir_button")
+        dir_button_frame.grid_columnconfigure(1, weight=1, uniform="dir_button")
+        
+        # Importar button
+        self.btn_open_1 = ctk.CTkButton(
+            dir_button_frame,
+            text="Importar",
+            command=self._open_directory_1,
+            fg_color="#27ae60",
+            hover_color="#229954",
+            width=110,
+            height=35,
+            font=ctk.CTkFont(size=12, weight="bold")
         )
-        logo_label.grid(row=0, column=0, padx=20, pady=(20, 10))
+        self.btn_open_1.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
+        
+        # Comparar button - Opens comparison window
+        self.btn_open_2 = ctk.CTkButton(
+            dir_button_frame,
+            text="Comparar",
+            command=self._open_comparison,
+            fg_color="#9b59b6",
+            hover_color="#8e44ad",
+            width=110,
+            height=35,
+            font=ctk.CTkFont(size=12, weight="bold")
+        )
+        self.btn_open_2.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+        
+        # Store callback for directory change and comparison
+        self.on_directory_changed = None
+        self.on_open_comparison = None
         
         # Create parameter controls
         self._create_parameter_controls()
@@ -356,3 +387,67 @@ class ControlSidebar(ctk.CTkFrame):
         # Load min distance
         self.entry_mindist.delete(0, 'end')
         self.entry_mindist.insert(0, str(saved_params['min_dist_time'] * 1e6))
+    
+    def _open_directory_1(self):
+        """Open directory selection dialog for Abrir 1."""
+        from tkinter import filedialog
+        from pathlib import Path
+        from utils import read_data_config
+        
+        # Get last opened directory from config
+        last_dir = self.config.get_last_data_dir()
+        
+        # Determine initial directory
+        if last_dir and Path(last_dir).exists():
+            initial_dir = str(Path(last_dir).parent)
+        elif config.DATA_DIR.exists():
+            initial_dir = str(config.DATA_DIR.parent)
+        else:
+            initial_dir = None
+        
+        # Open directory selection dialog
+        selected_dir = filedialog.askdirectory(
+            title="Seleccionar Directorio de Datos",
+            initialdir=initial_dir
+        )
+        
+        if not selected_dir:
+            return  # User cancelled
+        
+        # Update the global DATA_DIR
+        config.DATA_DIR = Path(selected_dir)
+        
+        # Save as last opened directory
+        self.config.save_last_data_dir(selected_dir)
+        
+        print(f"✓ Directorio cambiado a: {selected_dir}")
+        
+        # Reload configuration from DATA.txt if available
+        data_config = read_data_config(config.DATA_DIR)
+        
+        if data_config:
+            # Update global config values
+            if 'window_time' in data_config:
+                config.WINDOW_TIME = data_config['window_time']
+            if 'trigger_voltage' in data_config:
+                config.TRIGGER_VOLTAGE = data_config['trigger_voltage']
+            if 'num_points' in data_config:
+                config.NUM_POINTS = data_config['num_points']
+                config.SAMPLE_TIME = config.WINDOW_TIME / config.NUM_POINTS
+        
+        # Notify parent to reload data and rerun analysis
+        if self.on_directory_changed:
+            self.on_directory_changed()
+    
+    def set_directory_changed_callback(self, callback):
+        """Set callback for when directory is changed."""
+        self.on_directory_changed = callback
+    
+    def _open_comparison(self):
+        """Open comparison window."""
+        if self.on_open_comparison:
+            self.on_open_comparison()
+    
+    def set_comparison_callback(self, callback):
+        """Set callback for opening comparison window."""
+        self.on_open_comparison = callback

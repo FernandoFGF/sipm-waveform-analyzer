@@ -8,4 +8,5 @@ from .base_popup import show_error_dialog
 from .charge_histogram_window import show_charge_histogram
 from .signal_processing_window import show_signal_processing
 from .advanced_sipm_analysis_window import show_advanced_sipm_analysis
+from .comparison_window import show_comparison_window
 

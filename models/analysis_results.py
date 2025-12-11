@@ -16,6 +16,7 @@ class WaveformResult:
     peaks: np.ndarray  # Valid peaks that passed all filters
     all_peaks: np.ndarray  # All peaks initially detected
     properties: Dict  # scipy find_peaks properties
+    peak_rejection_reasons: Dict[int, str] = field(default_factory=dict)  # Maps peak index to rejection reason
 
 
 @dataclass
@@ -24,7 +25,7 @@ class AnalysisResults:
     accepted_results: List[WaveformResult] = field(default_factory=list)
     rejected_results: List[WaveformResult] = field(default_factory=list)
     afterpulse_results: List[WaveformResult] = field(default_factory=list)
-    rejected_afterpulse_results: List[WaveformResult] = field(default_factory=list)
+    favorites_results: List[WaveformResult] = field(default_factory=list)
     
     # Statistics
     total_peaks: int = 0
@@ -34,6 +35,11 @@ class AnalysisResults:
     max_dist_high: float = 0.0
     afterpulse_low: float = 0.0
     afterpulse_high: float = 0.0
+    
+    def __post_init__(self):
+        """Ensure favorites_results exists for backward compatibility."""
+        if not hasattr(self, 'favorites_results'):
+            self.favorites_results = []
     
     def get_accepted_count(self) -> int:
         """Get number of accepted waveforms."""
@@ -47,14 +53,28 @@ class AnalysisResults:
         """Get number of afterpulse waveforms."""
         return len(self.afterpulse_results)
     
-    def get_rejected_afterpulse_count(self) -> int:
-        """Get number of rejected afterpulse waveforms."""
-        return len(self.rejected_afterpulse_results)
+    def get_favorites_count(self) -> int:
+        """Get number of favorite waveforms."""
+        return len(self.favorites_results)
+    
+    def add_to_favorites(self, result: WaveformResult):
+        """Add a waveform to favorites."""
+        # Check if already in favorites
+        if not any(f.filename == result.filename for f in self.favorites_results):
+            self.favorites_results.append(result)
+    
+    def remove_from_favorites(self, filename: str):
+        """Remove a waveform from favorites by filename."""
+        self.favorites_results = [f for f in self.favorites_results if f.filename != filename]
+    
+    def is_favorite(self, filename: str) -> bool:
+        """Check if a waveform is in favorites."""
+        return any(f.filename == filename for f in self.favorites_results)
     
     def clear(self):
         """Clear all results."""
         self.accepted_results.clear()
         self.rejected_results.clear()
         self.afterpulse_results.clear()
-        self.rejected_afterpulse_results.clear()
+        self.favorites_results.clear()
         self.total_peaks = 0

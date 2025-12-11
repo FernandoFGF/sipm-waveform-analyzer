@@ -14,7 +14,9 @@ from utils.plotting import save_figure
 class PlotPanel(ctk.CTkFrame):
     """Reusable panel for displaying waveform plots."""
     
-    def __init__(self, parent, title: str, color: str, on_next, on_prev):
+    def __init__(self, parent, title: str, color: str, on_next, on_prev, on_show_info=None, 
+                 on_add_favorite=None, on_remove_favorite=None, check_is_favorite=None,
+                 category: str = None, on_save_set=None):
         """
         Initialize plot panel.
         
@@ -24,6 +26,12 @@ class PlotPanel(ctk.CTkFrame):
             color: Line color for waveforms
             on_next: Callback for next button
             on_prev: Callback for previous button
+            on_show_info: Callback for showing peak information
+            on_add_favorite: Callback for adding to favorites
+            on_remove_favorite: Callback for removing from favorites
+            check_is_favorite: Callback to check if current result is favorite
+            category: Category name (accepted, rejected, afterpulse, favorites)
+            on_save_set: Callback for saving complete set
         """
         super().__init__(parent)
         
@@ -31,6 +39,13 @@ class PlotPanel(ctk.CTkFrame):
         self.color = color
         self.on_next = on_next
         self.on_prev = on_prev
+        self.on_show_info = on_show_info
+        self.on_add_favorite = on_add_favorite
+        self.on_remove_favorite = on_remove_favorite
+        self.check_is_favorite = check_is_favorite
+        self.category = category
+        self.on_save_set = on_save_set
+        self.current_result = None  # Store current result for info display
         
         # Configure grid
         self.grid_rowconfigure(0, weight=1)
@@ -81,15 +96,47 @@ class PlotPanel(ctk.CTkFrame):
         import tkinter as tk
         
         self.context_menu = tk.Menu(self, tearoff=0)
+        self.context_menu.add_command(label="📊 Mostrar Información", command=self._show_peak_info)
+        self.context_menu.add_separator()
+        
+        # Favorites options (will be shown/hidden dynamically)
+        self.add_favorite_index = self.context_menu.index("end") + 1
+        self.context_menu.add_command(label="⭐ Añadir a Favoritos", command=self._add_to_favorites)
+        
+        self.remove_favorite_index = self.context_menu.index("end") + 1
+        self.context_menu.add_command(label="❌ Quitar de Favoritos", command=self._remove_from_favorites)
+        
+        self.context_menu.add_separator()
         self.context_menu.add_command(label="💾 Guardar como PNG", command=lambda: self._save_plot("png"))
         self.context_menu.add_command(label="💾 Guardar como PDF", command=lambda: self._save_plot("pdf"))
         self.context_menu.add_command(label="💾 Guardar como SVG", command=lambda: self._save_plot("svg"))
+        
+        # Add save set option if callback is provided
+        if self.on_save_set and self.category:
+            self.context_menu.add_separator()
+            self.context_menu.add_command(label="📦 Guardar Set Completo", command=self._save_set)
         
         # Bind right click to canvas
         self.canvas.get_tk_widget().bind("<Button-3>", self._show_context_menu)
 
     def _show_context_menu(self, event):
-        """Show context menu at mouse position."""
+        """Show context menu and update favorites options visibility."""
+        # Update favorites menu items based on current state
+        if self.current_result and self.check_is_favorite:
+            is_fav = self.check_is_favorite(self.current_result.filename)
+            
+            # Show/hide appropriate option
+            if is_fav:
+                self.context_menu.entryconfig(self.add_favorite_index, state="disabled")
+                self.context_menu.entryconfig(self.remove_favorite_index, state="normal")
+            else:
+                self.context_menu.entryconfig(self.add_favorite_index, state="normal")
+                self.context_menu.entryconfig(self.remove_favorite_index, state="disabled")
+        else:
+            # Disable both if no callbacks
+            self.context_menu.entryconfig(self.add_favorite_index, state="disabled")
+            self.context_menu.entryconfig(self.remove_favorite_index, state="disabled")
+        
         try:
             self.context_menu.tk_popup(event.x_root, event.y_root)
         finally:
@@ -98,6 +145,26 @@ class PlotPanel(ctk.CTkFrame):
     def _save_plot(self, fmt):
         """Save plot to file."""
         save_figure(self.fig, default_prefix="waveform")
+    
+    def _show_peak_info(self):
+        """Show peak information panel."""
+        if self.on_show_info and self.current_result:
+            self.on_show_info(self.current_result)
+    
+    def _add_to_favorites(self):
+        """Add current waveform to favorites."""
+        if self.on_add_favorite and self.current_result:
+            self.on_add_favorite(self.current_result)
+    
+    def _remove_from_favorites(self):
+        """Remove current waveform from favorites."""
+        if self.on_remove_favorite and self.current_result:
+            self.on_remove_favorite(self.current_result)
+    
+    def _save_set(self):
+        """Save complete set of waveforms for this category."""
+        if self.on_save_set and self.category:
+            self.on_save_set(self.category)
     
     def update_plot(
         self,
@@ -164,6 +231,11 @@ class PlotPanel(ctk.CTkFrame):
             self.ax.plot(t_axis[valid_peaks], amplitudes[valid_peaks] * 1000, 'o',
                         color='white', markeredgecolor='black', markersize=6, label='Válidos')
         
+        # Plot trigger line (dotted line at trigger voltage)
+        from config import TRIGGER_VOLTAGE
+        self.ax.axhline(y=TRIGGER_VOLTAGE * 1000, color='purple', linestyle=':', 
+                       linewidth=2, label=f'Trigger ({TRIGGER_VOLTAGE:.2f}V)', alpha=0.7)
+        
         self.ax.set_title(
             f"{result.filename} - {len(valid_peaks)} Picos Válidos ({len(all_peaks)} Detectados)",
             fontsize=10
@@ -172,6 +244,9 @@ class PlotPanel(ctk.CTkFrame):
         self.ax.set_ylabel("Amplitud (mV)", fontsize=8)
         self.ax.set_ylim(global_min_amp * 1000, global_max_amp * 1000)
         self.ax.grid(True, alpha=0.3)
+        
+        # Store current result for info display
+        self.current_result = result
         
         self.canvas.draw()
     

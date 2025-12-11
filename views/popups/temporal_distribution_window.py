@@ -380,7 +380,7 @@ def show_temporal_distribution(parent, accepted_results, afterpulse_results):
     # Update button
     update_button = ctk.CTkButton(
         controls_frame,
-        text="[RUNNING] Actualizar",
+        text="Actualizar",
         command=on_update_button,
         width=150,
         height=40,

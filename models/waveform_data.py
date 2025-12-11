@@ -27,18 +27,23 @@ class WaveformData:
         self.all_amplitudes_flat = np.array([])
         self.all_max_times = []
         
-    def load_files(self, pattern: str = "SiPMG_LAr_DCR1_*.txt") -> int:
+    def load_files(self, pattern: str = None) -> int:
         """
         Load waveform files from directory.
         
         Args:
-            pattern: Glob pattern for file matching
+            pattern: Glob pattern for file matching (if None, uses directory name)
             
         Returns:
             Number of files loaded
         """
+        # If no pattern provided, derive it from the directory name
+        if pattern is None:
+            dir_name = self.data_dir.name
+            pattern = f"{dir_name}_*.txt"
+        
         self.waveform_files = sorted(self.data_dir.glob(pattern))
-        print(f"Loaded {len(self.waveform_files)} files.")
+        print(f"Loaded {len(self.waveform_files)} files using pattern: {pattern}")
         
         if self.waveform_files:
             self._calculate_global_statistics()

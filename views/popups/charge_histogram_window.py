@@ -297,7 +297,7 @@ def show_charge_histogram(parent, accepted_results, baseline_high):
     
     update_btn = ctk.CTkButton(
         controls_frame,
-        text="[RUNNING] Actualizar",
+        text="Actualizar",
         command=update_plot,
         width=150,
         height=40,

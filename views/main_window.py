@@ -12,6 +12,7 @@ from config import (
 from controllers.analysis_controller import AnalysisController
 from views.control_sidebar import ControlSidebar
 from views.plot_panel import PlotPanel
+from views.peak_info_panel import PeakInfoPanel
 from views.popups import show_temporal_distribution, show_all_waveforms, show_charge_histogram
 from utils import ResultsExporter
 
@@ -48,42 +49,86 @@ class MainWindow(ctk.CTk):
         )
         self.sidebar.grid(row=0, column=0, rowspan=2, sticky="nsew")
         
-        # Create plot panels
+        # Set callback for directory changes
+        self.sidebar.set_directory_changed_callback(self.on_directory_changed)
+        
+        # Set callback for comparison window
+        self.sidebar.set_comparison_callback(self.open_comparison_window)
+        
+        # Create plot panels with new layout:
+        # Top-left: Aceptados | Top-right: Afterpulse
+        # Bottom-left: Rechazados | Bottom-right: Favoritos
+        
         self.panel_accepted = PlotPanel(
             self,
             "Aceptados (1 Pico)",
             COLOR_ACCEPTED,
             on_next=lambda: self.navigate_next("accepted"),
-            on_prev=lambda: self.navigate_prev("accepted")
+            on_prev=lambda: self.navigate_prev("accepted"),
+            on_show_info=self.show_peak_info,
+            on_add_favorite=self.add_to_favorites,
+            on_remove_favorite=self.remove_from_favorites,
+            check_is_favorite=self.is_favorite,
+            category="accepted",
+            on_save_set=self.save_waveform_set
         )
         self.panel_accepted.grid(row=0, column=1, padx=5, pady=5, sticky="nsew")
-        
-        self.panel_rejected = PlotPanel(
-            self,
-            "Rechazados (0 Picos)",
-            COLOR_REJECTED,
-            on_next=lambda: self.navigate_next("rejected"),
-            on_prev=lambda: self.navigate_prev("rejected")
-        )
-        self.panel_rejected.grid(row=0, column=2, padx=5, pady=5, sticky="nsew")
         
         self.panel_afterpulse = PlotPanel(
             self,
             "Afterpulse (>1 Picos)",
             COLOR_AFTERPULSE,
             on_next=lambda: self.navigate_next("afterpulse"),
-            on_prev=lambda: self.navigate_prev("afterpulse")
+            on_prev=lambda: self.navigate_prev("afterpulse"),
+            on_show_info=self.show_peak_info,
+            on_add_favorite=self.add_to_favorites,
+            on_remove_favorite=self.remove_from_favorites,
+            check_is_favorite=self.is_favorite,
+            category="afterpulse",
+            on_save_set=self.save_waveform_set
         )
-        self.panel_afterpulse.grid(row=1, column=1, padx=5, pady=5, sticky="nsew")
+        self.panel_afterpulse.grid(row=0, column=2, padx=5, pady=5, sticky="nsew")
         
-        self.panel_rejected_afterpulse = PlotPanel(
+        self.panel_rejected = PlotPanel(
             self,
-            "Rechazados con Afterpulses",
-            COLOR_REJECTED_AFTERPULSE,
-            on_next=lambda: self.navigate_next("rejected_afterpulse"),
-            on_prev=lambda: self.navigate_prev("rejected_afterpulse")
+            "Rechazados",
+            COLOR_REJECTED,
+            on_next=lambda: self.navigate_next("rejected"),
+            on_prev=lambda: self.navigate_prev("rejected"),
+            on_show_info=self.show_peak_info,
+            on_add_favorite=self.add_to_favorites,
+            on_remove_favorite=self.remove_from_favorites,
+            check_is_favorite=self.is_favorite,
+            category="rejected",
+            on_save_set=self.save_waveform_set
         )
-        self.panel_rejected_afterpulse.grid(row=1, column=2, padx=5, pady=5, sticky="nsew")
+        self.panel_rejected.grid(row=1, column=1, padx=5, pady=5, sticky="nsew")
+        
+        self.panel_favorites = PlotPanel(
+            self,
+            "Favoritos",
+            "#f39c12",  # Orange color for favorites
+            on_next=lambda: self.navigate_next("favorites"),
+            on_prev=lambda: self.navigate_prev("favorites"),
+            on_show_info=self.show_peak_info,
+            on_add_favorite=self.add_to_favorites,
+            on_remove_favorite=self.remove_from_favorites,
+            check_is_favorite=self.is_favorite,
+            category="favorites",
+            on_save_set=self.save_waveform_set
+        )
+        self.panel_favorites.grid(row=1, column=2, padx=5, pady=5, sticky="nsew")
+        
+        # Create peak info panel (hidden by default)
+        self.info_panel = PeakInfoPanel(self)
+        self.info_panel.set_hide_callback(self.hide_peak_info)
+        # Panel will be shown in column 3 when needed
+        
+        # Save initial DATA_DIR as last opened
+        from utils import get_config
+        import config
+        config_manager = get_config()
+        config_manager.save_last_data_dir(str(config.DATA_DIR))
         
         # Load data and run initial analysis
         self.controller.load_data()
@@ -101,24 +146,22 @@ class MainWindow(ctk.CTk):
             accepted=results.get_accepted_count(),
             afterpulse=results.get_afterpulse_count(),
             rejected=results.get_rejected_count(),
-            rejected_ap=results.get_rejected_afterpulse_count(),
+            rejected_ap=0,  # No longer tracking rejected_afterpulse separately
             total_peaks=results.total_peaks,
             baseline_mv=(results.baseline_high - results.baseline_low) * 1000  # Baseline amplitude in mV
         )
         
         # Update panel titles
         self.panel_accepted.update_title(f"Aceptados ({results.get_accepted_count()})")
-        self.panel_rejected.update_title(f"Rechazados ({results.get_rejected_count()})")
         self.panel_afterpulse.update_title(f"Afterpulse ({results.get_afterpulse_count()})")
-        self.panel_rejected_afterpulse.update_title(
-            f"Rech. c/ AP ({results.get_rejected_afterpulse_count()})"
-        )
+        self.panel_rejected.update_title(f"Rechazados ({results.get_rejected_count()})")
+        self.panel_favorites.update_title(f"Favoritos ({results.get_favorites_count()})")
         
         # Update plots
         self.update_plot("accepted")
         self.update_plot("rejected")
         self.update_plot("afterpulse")
-        self.update_plot("rejected_afterpulse")
+        self.update_plot("favorites")
     
     def navigate_next(self, category: str):
         """Navigate to next item in category."""
@@ -140,8 +183,10 @@ class MainWindow(ctk.CTk):
             panel = self.panel_rejected
         elif category == "afterpulse":
             panel = self.panel_afterpulse
-        else:  # rejected_afterpulse
-            panel = self.panel_rejected_afterpulse
+        elif category == "favorites":
+            panel = self.panel_favorites
+        else:
+            return  # Unknown category
         
         if not results_list:
             panel.show_no_data()
@@ -151,7 +196,7 @@ class MainWindow(ctk.CTk):
         result = results_list[idx]
         
         # Determine if we should show afterpulse zone
-        show_afterpulse = category in ["afterpulse", "rejected_afterpulse"]
+        show_afterpulse = category == "afterpulse"
         
         panel.update_plot(
             result=result,
@@ -208,6 +253,106 @@ class MainWindow(ctk.CTk):
             self.controller.waveform_data,
             self.controller.results
         )
+    
+    def show_peak_info(self, result):
+        """Show peak information panel for a waveform result."""
+        # Show the info panel in column 3
+        self.info_panel.grid(row=0, column=3, rowspan=2, padx=5, pady=5, sticky="nsew")
+        
+        # Display peak information
+        self.info_panel.show_peak_info(
+            result,
+            self.controller.results.baseline_high,
+            self.controller.results.max_dist_low,
+            self.controller.results.max_dist_high
+        )
+    
+    def hide_peak_info(self):
+        """Hide peak information panel."""
+        self.info_panel.grid_forget()
+    
+    def add_to_favorites(self, result):
+        """Add a waveform to favorites."""
+        self.controller.add_to_favorites(result)
+        # Update title with new count
+        self.panel_favorites.update_title(f"Favoritos ({self.controller.results.get_favorites_count()})")
+        self.update_plot("favorites")  # Refresh favorites panel
+    
+    def remove_from_favorites(self, result):
+        """Remove a waveform from favorites."""
+        self.controller.remove_from_favorites(result.filename)
+        # Update title with new count
+        self.panel_favorites.update_title(f"Favoritos ({self.controller.results.get_favorites_count()})")
+        self.update_plot("favorites")  # Refresh favorites panel
+    
+    def is_favorite(self, filename: str) -> bool:
+        """Check if a waveform is in favorites."""
+        return self.controller.is_favorite(filename)
+    
+    def save_waveform_set(self, category: str):
+        """Save complete set of waveforms for a category.
+        
+        Args:
+            category: Category name (accepted, rejected, afterpulse, favorites)
+        """
+        from tkinter import filedialog
+        import shutil
+        import config
+        from pathlib import Path
+        
+        # Get the results for this category
+        results_list = self.controller.get_results_for_category(category)
+        
+        if not results_list:
+            print(f"No hay waveforms en la categoría {category}")
+            return
+        
+        # Create category name mapping
+        category_names = {
+            "accepted": "ACEPTADOS",
+            "rejected": "RECHAZADOS",
+            "afterpulse": "AFTERPULSES",
+            "favorites": "FAVORITOS"
+        }
+        
+        category_name = category_names.get(category, category.upper())
+        
+        # Get the dataset name from current DATA_DIR
+        dataset_name = config.DATA_DIR.name
+        
+        # Suggested directory name
+        suggested_name = f"{category_name}_{dataset_name}"
+        
+        # Ask user where to save
+        save_dir = filedialog.askdirectory(
+            title=f"Seleccionar directorio para guardar {category_name}",
+            initialdir=str(config.DATA_DIR.parent)
+        )
+        
+        if not save_dir:
+            return  # User cancelled
+        
+        # Create the target directory
+        target_dir = Path(save_dir) / suggested_name
+        target_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Copy waveform files
+        copied_count = 0
+        for result in results_list:
+            source_file = config.DATA_DIR / result.filename
+            if source_file.exists():
+                target_file = target_dir / result.filename
+                shutil.copy2(source_file, target_file)
+                copied_count += 1
+        
+        # Also copy DATA.txt if it exists
+        data_txt = config.DATA_DIR / "DATA.txt"
+        if data_txt.exists():
+            shutil.copy2(data_txt, target_dir / "DATA.txt")
+        
+        print(f"✓ Guardados {copied_count} archivos en: {target_dir}")
+        print(f"  Categoría: {category_name}")
+        print(f"  Dataset: {dataset_name}")
 
     
     def export_results(self):
@@ -308,3 +453,27 @@ class MainWindow(ctk.CTk):
             print(f"✓ Resultados exportados exitosamente a {filepath}")
         except Exception as e:
             print(f"Error exportando resultados: {e}")
+    
+    def on_directory_changed(self):
+        """Handle directory change - reload data and rerun analysis."""
+        print("Recargando datos del nuevo directorio...")
+        
+        # Reinitialize the controller to clear old data, passing the new DATA_DIR
+        from controllers.analysis_controller import AnalysisController
+        import config
+        self.controller = AnalysisController(data_dir=config.DATA_DIR)
+        
+        # Load data from new directory
+        self.controller.load_data()
+        
+        # Run analysis
+        self.run_analysis()
+        
+        print("✓ Datos recargados y análisis completado")
+    
+    def open_comparison_window(self):
+        """Open comparison window for comparing datasets."""
+        from views.popups import show_comparison_window
+        import config
+        
+        show_comparison_window(self, self.controller, config.DATA_DIR)
