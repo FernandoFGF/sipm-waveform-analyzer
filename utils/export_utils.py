@@ -9,7 +9,7 @@ from datetime import datetime
 import numpy as np
 
 from models.analysis_results import AnalysisResults, WaveformResult
-from models.sipm_analyzer import SiPMMetrics
+from models.signal_processing import SiPMMetrics
 from config import SAMPLE_TIME, WINDOW_TIME
 
 
@@ -105,9 +105,8 @@ class ResultsExporter:
                 'baseline_low_mV': results.baseline_low * 1000,
                 'baseline_high_mV': results.baseline_high * 1000,
                 'max_dist_low_us': results.max_dist_low * 1e6,
-                'max_dist_high_us': results.max_dist_high * 1e6,
-                'afterpulse_low_us': results.afterpulse_low * 1e6,
-                'afterpulse_high_us': results.afterpulse_high * 1e6
+                'max_dist_high_us': results.max_dist_high * 1e6
+                # Note: afterpulse zone removed
             },
             'waveforms': {
                 'accepted': [ResultsExporter._waveform_to_dict(r) for r in results.accepted_results],

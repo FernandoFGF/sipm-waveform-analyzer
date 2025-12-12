@@ -33,8 +33,7 @@ class AnalysisResults:
     baseline_high: float = 0.0
     max_dist_low: float = 0.0
     max_dist_high: float = 0.0
-    afterpulse_low: float = 0.0
-    afterpulse_high: float = 0.0
+    # Note: afterpulse_low/high removed - zone calculation no longer used
     
     def __post_init__(self):
         """Ensure favorites_results exists for backward compatibility."""
@@ -70,6 +69,19 @@ class AnalysisResults:
     def is_favorite(self, filename: str) -> bool:
         """Check if a waveform is in favorites."""
         return any(f.filename == filename for f in self.favorites_results)
+    
+    def get_favorite_original_category(self, filename: str) -> str:
+        """Get the original category of a favorite (accepted/rejected/afterpulse)."""
+        # Check in accepted
+        if any(r.filename == filename for r in self.accepted_results):
+            return "accepted"
+        # Check in afterpulse
+        elif any(r.filename == filename for r in self.afterpulse_results):
+            return "afterpulse"
+        # Check in rejected
+        elif any(r.filename == filename for r in self.rejected_results):
+            return "rejected"
+        return "unknown"
     
     def clear(self):
         """Clear all results."""

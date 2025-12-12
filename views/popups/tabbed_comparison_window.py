@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import numpy as np
 from pathlib import Path
+import threading
+import queue
 
 
 class TabbedComparisonWindow(ctk.CTkToplevel):
@@ -36,10 +38,65 @@ class TabbedComparisonWindow(ctk.CTkToplevel):
         self.tabview = ctk.CTkTabview(self)
         self.tabview.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
         
-        # Create tabs based on selected options
-        self._create_tabs()
+        # Threading infrastructure
+        self.loading_queue = queue.Queue()
+        self.tabs_created = False
+        self._start_queue_checker()
+        
+        # Show loading message
+        self.loading_label = ctk.CTkLabel(
+            self.tabview,
+            text="Cargando comparación...\nEsto puede tardar unos momentos.",
+            font=ctk.CTkFont(size=14)
+        )
+        self.loading_label.place(relx=0.5, rely=0.5, anchor="center")
+        
+        # Create tabs in background
+        thread = threading.Thread(
+            target=self._create_tabs_thread,
+            daemon=True
+        )
+        thread.start()
         
         self.focus()
+    
+    def _start_queue_checker(self):
+        """Start periodic queue checking for tab creation."""
+        self._check_loading_queue()
+    
+    def _check_loading_queue(self):
+        """Check queue for messages from loading thread (runs every 100ms)."""
+        try:
+            while True:
+                msg_type, data = self.loading_queue.get_nowait()
+                
+                if msg_type == "complete":
+                    # Tabs created successfully
+                    self.loading_label.destroy()
+                    self.tabs_created = True
+                
+                elif msg_type == "error":
+                    # Error creating tabs
+                    self.loading_label.configure(
+                        text=f"Error cargando comparación:\n{data}"
+                    )
+        
+        except queue.Empty:
+            pass
+        
+        # Schedule next check in 100ms
+        if not self.tabs_created:
+            self.after(100, self._check_loading_queue)
+    
+    def _create_tabs_thread(self):
+        """Background thread worker for tab creation."""
+        try:
+            self._create_tabs()
+            self.loading_queue.put(("complete", None))
+        except Exception as e:
+            import traceback
+            error_msg = f"{str(e)}\n{traceback.format_exc()}"
+            self.loading_queue.put(("error", error_msg))
     
     def _create_tabs(self):
         """Create tabs for each selected option."""
@@ -197,19 +254,45 @@ class TabbedComparisonWindow(ctk.CTkToplevel):
         ax = fig.add_subplot(111)
         fig.subplots_adjust(left=0.08, right=0.95, top=0.92, bottom=0.1)
         
-        # Plot both distributions
-        if self.controller1.waveform_data.all_amplitudes_flat.size > 0:
-            ax.hist(self.controller1.waveform_data.all_amplitudes_flat * 1000,
-                   bins=50, alpha=0.6, label=self.data_dir1.name, color='#3498db')
+        # Collect amplitude data if not already available
+        def get_all_amplitudes(controller):
+            """Get all amplitudes, collecting from results if needed."""
+            if hasattr(controller.waveform_data, 'all_amplitudes_flat') and \
+               controller.waveform_data.all_amplitudes_flat is not None and \
+               controller.waveform_data.all_amplitudes_flat.size > 0:
+                return controller.waveform_data.all_amplitudes_flat
+            
+            # Fallback: collect from results
+            all_amps = []
+            for result in controller.results.accepted_results:
+                all_amps.extend(result.amplitudes)
+            for result in controller.results.afterpulse_results:
+                all_amps.extend(result.amplitudes)
+            for result in controller.results.rejected_results:
+                all_amps.extend(result.amplitudes)
+            
+            return np.array(all_amps) if all_amps else np.array([])
         
-        if self.controller2.waveform_data.all_amplitudes_flat.size > 0:
-            ax.hist(self.controller2.waveform_data.all_amplitudes_flat * 1000,
-                   bins=50, alpha=0.6, label=self.data_dir2.name, color='#e74c3c')
+        # Plot both distributions
+        amps1 = get_all_amplitudes(self.controller1)
+        amps2 = get_all_amplitudes(self.controller2)
+        
+        if amps1.size > 0:
+            ax.hist(amps1 * 1000, bins=50, alpha=0.6, 
+                   label=self.data_dir1.name, color='#3498db')
+        
+        if amps2.size > 0:
+            ax.hist(amps2 * 1000, bins=50, alpha=0.6, 
+                   label=self.data_dir2.name, color='#e74c3c')
         
         ax.set_xlabel('Amplitud (mV)')
         ax.set_ylabel('Frecuencia')
         ax.set_title('Comparación de Distribución de Amplitudes')
-        ax.legend()
+        
+        # Only show legend if we have data
+        if amps1.size > 0 or amps2.size > 0:
+            ax.legend()
+        
         ax.grid(True, alpha=0.3)
         
         canvas = FigureCanvasTkAgg(fig, master=tab)
@@ -245,7 +328,7 @@ class TabbedComparisonWindow(ctk.CTkToplevel):
                     all_global_peaks.append((t_global, amp))
             
             if len(all_global_peaks) < 2:
-                return np.array([]), np.array([]), None, None
+                return np.array([]), np.array([]), None
             
             all_global_peaks.sort(key=lambda x: x[0])
             times = np.array([p[0] for p in all_global_peaks])
@@ -379,20 +462,31 @@ class TabbedComparisonWindow(ctk.CTkToplevel):
         # State
         self.wf_percentage = 0.1 # Default 10%
         self.view_mode = 'overlay' # 'overlay' or 'distributed'
+        self.show_accepted = ctk.BooleanVar(value=True)
+        self.show_rejected = ctk.BooleanVar(value=True)
         canvas_refs = {'overlay': None, 'distributed': None}
         
         def get_all_waveforms(controller):
-            """Get all waveforms from all categories."""
-            return (controller.results.accepted_results + 
-                    controller.results.rejected_results + 
-                    controller.results.afterpulse_results)
+            """Get all waveforms from compatible categories based on filters."""
+            waveforms = []
+            
+            # Accepted (includes normal Accepted + Afterpulses)
+            if self.show_accepted.get():
+                waveforms.extend(controller.results.accepted_results)
+                waveforms.extend(controller.results.afterpulse_results)
+                
+            # Rejected
+            if self.show_rejected.get():
+                waveforms.extend(controller.results.rejected_results)
+                
+            return waveforms
 
         def get_plot_style(num_files):
             """Determine alpha and linewidth based on file count."""
-            if num_files < 50: return 0.7, 1.5
-            elif num_files < 200: return 0.45, 1.3
-            elif num_files < 500: return 0.3, 1.1
-            else: return 0.2, 1.0
+            if num_files < 50: return 0.3, 1.5
+            elif num_files < 200: return 0.15, 1.3
+            elif num_files < 500: return 0.08, 1.1
+            else: return 0.04, 1.0
 
         def update_view():
             """Update currently selected view."""
@@ -401,26 +495,17 @@ class TabbedComparisonWindow(ctk.CTkToplevel):
             else:
                 show_distributed()
 
-        def on_slider_change(value):
-            """Handle slider change with discrete steps."""
-            # Map discrete slider steps (0-4) to percentages
-            step = int(round(value))
-            mapping = {0: 0.10, 1: 0.25, 2: 0.50, 3: 0.75, 4: 1.00}
-            target_pct = mapping.get(step, 0.10)
+        def on_filter_change():
+            """Handle checkbox change."""
+            # Force recreation of plots
+            canvas_refs['overlay'] = None
+            canvas_refs['distributed'] = None
             
-            if target_pct != self.wf_percentage:
-                self.wf_percentage = target_pct
-                slider_label.configure(text=f"Muestreo: {int(self.wf_percentage*100)}%")
-                
-                # Force recreation of plots
-                canvas_refs['overlay'] = None
-                canvas_refs['distributed'] = None
-                
-                # Clear container
-                for widget in plot_container.winfo_children():
-                    widget.destroy()
-                
-                update_view()
+            # Clear container
+            for widget in plot_container.winfo_children():
+                widget.destroy()
+            
+            update_view()
 
         def show_overlay():
             """Show overlay view (side-by-side local time)."""
@@ -463,6 +548,11 @@ class TabbedComparisonWindow(ctk.CTkToplevel):
             def plot_dataset(ax, controller, name, color):
                 all_results = get_all_waveforms(controller)
                 total_available = len(all_results)
+                
+                if total_available == 0:
+                    ax.text(0.5, 0.5, "No waveforms selected", ha='center', va='center')
+                    ax.set_title(f'{name} (0)')
+                    return 0
                 
                 # Apply sampling based on percentage
                 limit = int(total_available * self.wf_percentage)
@@ -522,6 +612,12 @@ class TabbedComparisonWindow(ctk.CTkToplevel):
             def plot_global(ax, controller, name, color):
                 all_results = get_all_waveforms(controller)
                 total_available = len(all_results)
+                
+                if total_available == 0:
+                    ax.text(0.5, 0.5, "No waveforms selected", ha='center', va='center')
+                    ax.set_title(f'{name} (0)')
+                    return
+
                 limit = int(total_available * self.wf_percentage)
                 limit = max(1, limit) if total_available > 0 else 0
                 
@@ -568,16 +664,50 @@ class TabbedComparisonWindow(ctk.CTkToplevel):
         # Spacer
         ctk.CTkLabel(controls_frame, text="   |   ", font=ctk.CTkFont(size=14)).pack(side="left")
         
-        # Right: Percentage Slider
-        slider_label = ctk.CTkLabel(controls_frame, text="Muestreo: 10%", font=ctk.CTkFont(size=12, weight="bold"))
-        slider_label.pack(side="left", padx=(10, 5))
+        # Middle: Filters
+        ctk.CTkCheckBox(controls_frame, text="Aceptados", variable=self.show_accepted, 
+                       command=on_filter_change, width=80).pack(side="left", padx=5)
+        ctk.CTkCheckBox(controls_frame, text="Rechazados", variable=self.show_rejected,
+                       command=on_filter_change, width=80).pack(side="left", padx=5)
+
+        # Spacer
+        ctk.CTkLabel(controls_frame, text="   |   ", font=ctk.CTkFont(size=14)).pack(side="left")
         
-        # Slider with 5 steps (0 to 4) mapping to 10, 25, 50, 75, 100%
-        slider = ctk.CTkSlider(controls_frame, from_=0, to=4, number_of_steps=4, width=200, command=on_slider_change)
-        slider.set(0) # Initial value (0 -> 10%)
-        slider.pack(side="left", padx=5)
+        # Right: Percentage Dropdown
+        dropdown_label = ctk.CTkLabel(controls_frame, text="Muestreo:", font=ctk.CTkFont(size=12, weight="bold"))
+        dropdown_label.pack(side="left", padx=(10, 5))
         
-        ctk.CTkLabel(controls_frame, text="10%  25%  50%  75%  100%", font=ctk.CTkFont(size=10), text_color="gray").pack(side="left", padx=5)
+        def on_dropdown_change(value):
+            """Handle dropdown change."""
+            # Value comes as string "10%", "25%", etc.
+            pct_str = value.replace("%", "")
+            try:
+                target_pct = int(pct_str) / 100.0
+            except ValueError:
+                target_pct = 0.10
+            
+            if target_pct != self.wf_percentage:
+                self.wf_percentage = target_pct
+                
+                # Force recreation of plots
+                canvas_refs['overlay'] = None
+                canvas_refs['distributed'] = None
+                
+                # Clear container
+                for widget in plot_container.winfo_children():
+                    widget.destroy()
+                
+                update_view()
+
+        sampling_values = ["10%", "25%", "50%", "75%", "100%"]
+        dropdown = ctk.CTkOptionMenu(
+            controls_frame,
+            values=sampling_values,
+            command=on_dropdown_change,
+            width=100
+        )
+        dropdown.set("10%") # Initial value
+        dropdown.pack(side="left", padx=5)
         
         # Initial View
         create_overlay_view()

@@ -166,6 +166,7 @@ class PlotPanel(ctk.CTkFrame):
         if self.on_save_set and self.category:
             self.on_save_set(self.category)
     
+    
     def update_plot(
         self,
         result: WaveformResult,
@@ -175,9 +176,8 @@ class PlotPanel(ctk.CTkFrame):
         baseline_high: float,
         max_dist_low: float,
         max_dist_high: float,
-        afterpulse_low: float = 0,
-        afterpulse_high: float = 0,
-        show_afterpulse_zone: bool = False
+        negative_trigger_mv: float = -10.0,
+        original_category: str = None
     ):
         """
         Update plot with new waveform data.
@@ -190,9 +190,8 @@ class PlotPanel(ctk.CTkFrame):
             baseline_high: Baseline upper bound
             max_dist_low: Max dist zone lower bound
             max_dist_high: Max dist zone upper bound
-            afterpulse_low: Afterpulse zone lower bound
-            afterpulse_high: Afterpulse zone upper bound
-            show_afterpulse_zone: Whether to show afterpulse zone
+            negative_trigger_mv: Negative trigger threshold in mV
+            original_category: Original category for favorites (accepted/rejected/afterpulse)
         """
         self.ax.clear()
         
@@ -214,34 +213,51 @@ class PlotPanel(ctk.CTkFrame):
         self.ax.axvspan(max_dist_low * 1e6, max_dist_high * 1e6, 
                        color='blue', alpha=0.15, label='Zona de Maximos')
         
-        # Plot afterpulse area (only in afterpulse plots)
-        if show_afterpulse_zone and (afterpulse_low != 0 or afterpulse_high != 0):
-            self.ax.axvspan(afterpulse_low * 1e6, afterpulse_high * 1e6, 
-                           color='green', alpha=0.15, label='Afterpulse')
+        
+        # Note: Afterpulse zone visualization removed (parameter no longer used)
         
         # Plot rejected peaks (in all_peaks but not in valid_peaks)
-        rejected_peaks = [p for p in all_peaks if p not in valid_peaks]
-        if len(rejected_peaks) > 0:
-            self.ax.plot(t_axis[rejected_peaks], amplitudes[rejected_peaks] * 1000, 'x',
-                        color='red', markeredgecolor='darkred', markersize=8, 
-                        markeredgewidth=2, label='Rechazados')
+        # Convert to sets for proper comparison
+        valid_peaks_set = set(valid_peaks.tolist() if hasattr(valid_peaks, 'tolist') else valid_peaks)
+        all_peaks_set = set(all_peaks.tolist() if hasattr(all_peaks, 'tolist') else all_peaks)
+        rejected_peaks_indices = list(all_peaks_set - valid_peaks_set)
+        
+        if len(rejected_peaks_indices) > 0:
+            rejected_peaks_array = np.array(sorted(rejected_peaks_indices))
+            self.ax.plot(t_axis[rejected_peaks_array], amplitudes[rejected_peaks_array] * 1000, 'x',
+                        color='red', markeredgecolor='darkred', markersize=10, 
+                        markeredgewidth=2.5, label='Rechazados', zorder=5)
         
         # Plot valid peaks
         if len(valid_peaks) > 0:
             self.ax.plot(t_axis[valid_peaks], amplitudes[valid_peaks] * 1000, 'o',
-                        color='white', markeredgecolor='black', markersize=6, label='Válidos')
+                        color='white', markeredgecolor='black', markersize=6, label='Válidos', zorder=4)
         
         # Plot trigger line (dotted line at trigger voltage)
         from config import TRIGGER_VOLTAGE
         self.ax.axhline(y=TRIGGER_VOLTAGE * 1000, color='purple', linestyle=':', 
                        linewidth=2, label=f'Trigger ({TRIGGER_VOLTAGE:.2f}V)', alpha=0.7)
         
-        self.ax.set_title(
-            f"{result.filename} - {len(valid_peaks)} Picos Válidos ({len(all_peaks)} Detectados)",
-            fontsize=10
-        )
-        self.ax.set_xlabel("Tiempo (µs)", fontsize=8)
-        self.ax.set_ylabel("Amplitud (mV)", fontsize=8)
+        # Plot negative trigger line (dotted line at negative threshold)
+        self.ax.axhline(y=negative_trigger_mv, color='red', linestyle=':', 
+                       linewidth=2, label=f'Trigger Neg. ({negative_trigger_mv:.1f}mV)', alpha=0.7)
+        
+        # Set plot title with optional category badge
+        title = result.filename
+        if original_category:
+            # Add category badge
+            category_labels = {
+                "accepted": "✓ Aceptado",
+                "rejected": "✗ Rechazado",
+                "afterpulse": "⚡ Afterpulse"
+            }
+            badge = category_labels.get(original_category, "")
+            if badge:
+                title = f"{result.filename}\n[{badge}]"
+        
+        self.ax.set_title(title, fontsize=10)
+        self.ax.set_xlabel('Tiempo (µs)')
+        self.ax.set_ylabel('Amplitud (mV)')
         self.ax.set_ylim(global_min_amp * 1000, global_max_amp * 1000)
         self.ax.grid(True, alpha=0.3)
         

@@ -7,7 +7,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import numpy as np
 
 from config import SAMPLE_TIME
-from utils.signal_filters import apply_savitzky_golay, calculate_snr_improvement, calculate_rms_noise
+from models.signal_filters import apply_savitzky_golay, calculate_snr_improvement, calculate_rms_noise
 from views.popups.base_popup import BasePopup
 
 
@@ -20,34 +20,29 @@ def show_signal_processing(parent, waveform_data, current_results):
     # Create window
     window = BasePopup(parent, "Procesamiento de Señal - Smoothing", 1200, 600)
     
-    # Create main frame with three columns
+    # Create main frame with two columns (Controls | Plot)
     main_frame = ctk.CTkFrame(window)
     main_frame.pack(fill="both", expand=True, padx=10, pady=10)
-    main_frame.grid_columnconfigure(0, weight=1)  # Controls
-    main_frame.grid_columnconfigure(1, weight=2)  # Original view
-    main_frame.grid_columnconfigure(2, weight=2)  # Filtered view
+    main_frame.grid_columnconfigure(0, weight=1, minsize=300)  # Controls
+    main_frame.grid_columnconfigure(1, weight=3)  # One big plot
     main_frame.grid_rowconfigure(0, weight=1)
     
     # Left: Controls panel
     controls_frame = ctk.CTkFrame(main_frame)
     controls_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
     
-    # Center: Original plot
-    original_frame = ctk.CTkFrame(main_frame)
-    original_frame.grid(row=0, column=1, sticky="nsew", padx=5)
+    # Right: Plot panel
+    plot_frame = ctk.CTkFrame(main_frame)
+    plot_frame.grid(row=0, column=1, sticky="nsew", padx=5)
     
-    # Right: Filtered plot
-    filtered_frame = ctk.CTkFrame(main_frame)
-    filtered_frame.grid(row=0, column=2, sticky="nsew", padx=(5, 0))
-    
+    # State variables
     # State variables
     state = {
         'current_idx': 0,
         'total_waveforms': len(waveform_data.waveform_files),
-        'original_canvas': None,
-        'filtered_canvas': None,
-        'original_fig': None,
-        'filtered_fig': None,
+        'canvas': None,
+        'fig': None,
+        'ax': None,
         'current_filter': 'Smoothing'
     }
     
@@ -123,9 +118,9 @@ def show_signal_processing(parent, waveform_data, current_results):
                 if val % 2 == 0:
                     val += 1
                 window_value.configure(text=str(val))
-            # Increased range: 5-101 (was 5-51) for more aggressive smoothing
-            window_slider = ctk.CTkSlider(params_frame, from_=5, to=101, number_of_steps=48, command=on_window_change, width=150)
-            window_slider.set(11)
+            # Increased range significantly to allow for visible smoothing on clean signals
+            window_slider = ctk.CTkSlider(params_frame, from_=5, to=301, number_of_steps=148, command=on_window_change, width=150)
+            window_slider.set(51) # Default higher for visibility
             window_slider.pack(pady=(0, 10))
             
             poly_label = ctk.CTkLabel(params_frame, text="Poly Order:", font=ctk.CTkFont(size=10))
@@ -167,25 +162,64 @@ def show_signal_processing(parent, waveform_data, current_results):
     # Initialize with Smoothing params
     create_filter_params("Smoothing")
     
-    # Navigation
-    nav_label = ctk.CTkLabel(controls_frame, text="Navegación:", font=ctk.CTkFont(size=11, weight="bold"))
-    nav_label.pack(pady=(10, 5))
+    # Combined View + Navigation Frame
+    combined_frame = ctk.CTkFrame(controls_frame, fg_color="transparent")
+    combined_frame.pack(fill="x", padx=5, pady=10)
+    combined_frame.grid_columnconfigure(0, weight=1)
+    combined_frame.grid_columnconfigure(1, weight=1)
     
-    current_label = ctk.CTkLabel(controls_frame, text=f"1 / {state['total_waveforms']}", font=ctk.CTkFont(size=12))
-    current_label.pack(pady=5)
+    # Left: View Controls
+    view_frame = ctk.CTkFrame(combined_frame, fg_color="transparent")
+    view_frame.grid(row=0, column=0, sticky="nw", padx=5)
     
-    nav_buttons_frame = ctk.CTkFrame(controls_frame, fg_color="transparent")
-    nav_buttons_frame.pack(pady=5)
+    ctk.CTkLabel(view_frame, text="Visualización", font=ctk.CTkFont(size=11, weight="bold")).pack(anchor="w")
     
-    # Filename label
+    show_orig_var = ctk.BooleanVar(value=True)
+    show_filt_var = ctk.BooleanVar(value=True)
+    
+    def on_view_change():
+        update_plots()
+        
+    ctk.CTkCheckBox(view_frame, text="Original", variable=show_orig_var, command=on_view_change, font=ctk.CTkFont(size=10), width=60, height=20).pack(anchor="w", pady=2)
+    ctk.CTkCheckBox(view_frame, text="Filtrado", variable=show_filt_var, command=on_view_change, font=ctk.CTkFont(size=10), width=60, height=20).pack(anchor="w", pady=2)
+    
+    # Right: Navigation Controls
+    nav_frame = ctk.CTkFrame(combined_frame, fg_color="transparent")
+    nav_frame.grid(row=0, column=1, sticky="ne", padx=5)
+    
+    ctk.CTkLabel(nav_frame, text="Navegación", font=ctk.CTkFont(size=11, weight="bold")).pack(anchor="e")
+    
+    current_label = ctk.CTkLabel(nav_frame, text=f"1 / {state['total_waveforms']}", font=ctk.CTkFont(size=12))
+    current_label.pack(pady=2, anchor="e")
+    
+    nav_buttons_frame = ctk.CTkFrame(nav_frame, fg_color="transparent")
+    nav_buttons_frame.pack(pady=2, anchor="e")
+    
+    def navigate_prev():
+        if state['current_idx'] > 0:
+            state['current_idx'] -= 1
+            update_plots()
+    
+    def navigate_next():
+        if state['current_idx'] < state['total_waveforms'] - 1:
+            state['current_idx'] += 1
+            update_plots()
+    
+    prev_btn = ctk.CTkButton(nav_buttons_frame, text="◄", command=navigate_prev, width=30, height=25, font=ctk.CTkFont(size=12))
+    prev_btn.pack(side="left", padx=2)
+    
+    next_btn = ctk.CTkButton(nav_buttons_frame, text="►", command=navigate_next, width=30, height=25, font=ctk.CTkFont(size=12))
+    next_btn.pack(side="left", padx=2)
+    
+    # Filename label (below combined)
     filename_label = ctk.CTkLabel(
         controls_frame,
         text="",
-        font=ctk.CTkFont(size=8),
+        font=ctk.CTkFont(size=9),
         text_color="#7f8c8d",
-        wraplength=160
+        wraplength=280
     )
-    filename_label.pack(pady=(5, 15))
+    filename_label.pack(pady=(0, 10))
     
     # Metrics
     metrics_frame = ctk.CTkFrame(controls_frame, fg_color="#2b2b2b")
@@ -206,24 +240,27 @@ def show_signal_processing(parent, waveform_data, current_results):
     # ===== PLOT FUNCTIONS =====
     def apply_current_filter(amplitudes):
         """Apply the currently selected filter."""
-        filter_name = state['current_filter']
-        
-        if filter_name == "Smoothing":
-            window = int(param_widgets['window_slider'].get())
-            poly = int(param_widgets['poly_slider'].get())
-            return apply_savitzky_golay(amplitudes, window, poly)
+        try:
+            filter_name = state['current_filter']
+            if filter_name == "Smoothing":
+                window = int(param_widgets['window_slider'].get())
+                poly = int(param_widgets['poly_slider'].get())
+                return apply_savitzky_golay(amplitudes, window, poly)
+                
+            elif filter_name == "Decimation":
+                from scipy.signal import decimate
+                factor = int(param_widgets['factor_slider'].get())
+                # Decimate without interpolating back - this reduces file size
+                filtered = decimate(amplitudes, factor, zero_phase=True)
+                return filtered
+        except Exception as e:
+            print(f"Error applying filter {filter_name}: {e}")
+            return amplitudes.copy()
             
-        elif filter_name == "Decimation":
-            from scipy.signal import decimate
-            factor = int(param_widgets['factor_slider'].get())
-            # Decimate without interpolating back - this reduces file size
-            filtered = decimate(amplitudes, factor, zero_phase=True)
-            return filtered
-        
         return amplitudes.copy()
     
     def update_plots():
-        """Update both original and filtered plots."""
+        """Update the plot with original and filtered signals."""
         idx = state['current_idx']
         wf_path = waveform_data.waveform_files[idx]
         
@@ -240,10 +277,9 @@ def show_signal_processing(parent, waveform_data, current_results):
         # Apply filter
         filtered_amps = apply_current_filter(amplitudes)
         
-        # Create time array for filtered signal (may be different length for decimation)
+        # Create time array for filtered signal
         times_filtered = np.arange(len(filtered_amps)) * SAMPLE_TIME * 1e6
         if state['current_filter'] == "Decimation":
-            # Adjust time scale for decimated signal
             factor = int(param_widgets['factor_slider'].get())
             times_filtered = np.arange(len(filtered_amps)) * SAMPLE_TIME * factor * 1e6
         
@@ -256,77 +292,63 @@ def show_signal_processing(parent, waveform_data, current_results):
         current_label.configure(text=f"{idx + 1} / {state['total_waveforms']}")
         
         # Calculate metrics
-        snr_improvement = calculate_snr_improvement(amplitudes, filtered_amps)
-        rms_before = calculate_rms_noise(amplitudes) * 1000
-        rms_after = calculate_rms_noise(filtered_amps) * 1000
+        try:
+            snr_improvement = calculate_snr_improvement(amplitudes, filtered_amps)
+            rms_before = calculate_rms_noise(amplitudes) * 1000
+            rms_after = calculate_rms_noise(filtered_amps) * 1000
+            
+            snr_label.configure(text=f"SNR: {snr_improvement:+.2f} dB")
+            rms_before_label.configure(text=f"RMS antes: {rms_before:.3f} mV")
+            rms_after_label.configure(text=f"RMS después: {rms_after:.3f} mV")
+        except Exception as e:
+            print(f"Error calculating metrics: {e}")
+            snr_label.configure(text="SNR: Error")
+            # ...
         
-        snr_label.configure(text=f"SNR: {snr_improvement:+.2f} dB")
-        rms_before_label.configure(text=f"RMS antes: {rms_before:.3f} mV")
-        rms_after_label.configure(text=f"RMS después: {rms_after:.3f} mV")
+        # --- Plotting ---
+        if state['fig'] is None:
+            # Create larger figure
+            state['fig'] = plt.Figure(figsize=(8, 6), dpi=100)
+            state['ax'] = state['fig'].add_subplot(111)
+            # Adjust margins
+            state['fig'].subplots_adjust(left=0.08, right=0.98, top=0.92, bottom=0.08)
+            
+        ax = state['ax']
+        ax.clear()
         
-        # Plot original
-        if state['original_fig'] is None:
-            state['original_fig'] = plt.Figure(figsize=(5, 4), dpi=100)
-            state['original_ax'] = state['original_fig'].add_subplot(111)
+        # 1. Plot Original (Gray, thinner, semi-transparent)
+        if show_orig_var.get():
+            ax.plot(times, amps_mv, linewidth=0.8, color='gray', alpha=0.5, label='Original')
         
-        ax_orig = state['original_ax']
-        ax_orig.clear()
-        ax_orig.plot(times, amps_mv, linewidth=0.8, color='#3498db')
-        ax_orig.set_xlabel("Tiempo (µs)", fontsize=9)
-        ax_orig.set_ylabel("Amplitud (mV)", fontsize=9)
-        ax_orig.set_title("Original", fontsize=11, weight='bold')
-        ax_orig.grid(True, alpha=0.3)
-        ax_orig.tick_params(labelsize=8)
+        # 2. Plot Filtered (Green/Vibrant, slightly thicker)
+        if show_filt_var.get():
+            ax.plot(times_filtered, filtered_mv, linewidth=1.5, color='#27ae60', label='Filtrado')
         
-        if state['original_canvas'] is None:
-            state['original_canvas'] = FigureCanvasTkAgg(state['original_fig'], master=original_frame)
-            state['original_canvas'].get_tk_widget().pack(fill="both", expand=True)
+        # Setup title with params
+        title_text = f"Filtro: {state['current_filter']}"
+        if state['current_filter'] == "Smoothing":
+             w = int(param_widgets['window_slider'].get())
+             p = int(param_widgets['poly_slider'].get())
+             title_text += f" (W={w}, P={p})"
+        elif state['current_filter'] == "Decimation":
+             f = int(param_widgets['factor_slider'].get())
+             title_text += f" (Factor={f})"
+             
+        ax.set_title(title_text, fontsize=12, weight='bold')
+        ax.set_xlabel("Tiempo (µs)")
+        ax.set_ylabel("Amplitud (mV)")
+        ax.legend(loc='upper right')
+        ax.grid(True, alpha=0.3)
         
-        state['original_canvas'].draw()
-        state['original_canvas'].flush_events()
+        # Canvas management
+        if state['canvas'] is None:
+            state['canvas'] = FigureCanvasTkAgg(state['fig'], master=plot_frame)
+            state['canvas'].get_tk_widget().pack(fill="both", expand=True)
         
-        # Plot filtered
-        if state['filtered_fig'] is None:
-            state['filtered_fig'] = plt.Figure(figsize=(5, 4), dpi=100)
-            state['filtered_ax'] = state['filtered_fig'].add_subplot(111)
+        state['canvas'].draw()
+        state['canvas'].get_tk_widget().update_idletasks()
+        state['canvas'].flush_events()
         
-        ax_filt = state['filtered_ax']
-        ax_filt.clear()
-        ax_filt.plot(times_filtered, filtered_mv, linewidth=0.8, color='#27ae60')
-        ax_filt.set_xlabel("Tiempo (µs)", fontsize=9)
-        ax_filt.set_ylabel("Amplitud (mV)", fontsize=9)
-        ax_filt.set_title(f"Filtrado ({state['current_filter']})", fontsize=11, weight='bold')
-        ax_filt.grid(True, alpha=0.3)
-        ax_filt.tick_params(labelsize=8)
-        
-        # Match y-axis limits
-        y_min = min(ax_orig.get_ylim()[0], ax_filt.get_ylim()[0])
-        y_max = max(ax_orig.get_ylim()[1], ax_filt.get_ylim()[1])
-        ax_orig.set_ylim(y_min, y_max)
-        ax_filt.set_ylim(y_min, y_max)
-        
-        if state['filtered_canvas'] is None:
-            state['filtered_canvas'] = FigureCanvasTkAgg(state['filtered_fig'], master=filtered_frame)
-            state['filtered_canvas'].get_tk_widget().pack(fill="both", expand=True)
-        
-        state['filtered_canvas'].draw()
-        state['filtered_canvas'].flush_events()
-    
-    def navigate_prev():
-        if state['current_idx'] > 0:
-            state['current_idx'] -= 1
-            update_plots()
-    
-    def navigate_next():
-        if state['current_idx'] < state['total_waveforms'] - 1:
-            state['current_idx'] += 1
-            update_plots()
-    
-    prev_btn = ctk.CTkButton(nav_buttons_frame, text="◄", command=navigate_prev, width=50, height=30, font=ctk.CTkFont(size=14))
-    prev_btn.pack(side="left", padx=3)
-    
-    next_btn = ctk.CTkButton(nav_buttons_frame, text="►", command=navigate_next, width=50, height=30, font=ctk.CTkFont(size=14))
-    next_btn.pack(side="left", padx=3)
     
     # Update button
     update_btn = ctk.CTkButton(
@@ -378,6 +400,52 @@ def show_signal_processing(parent, waveform_data, current_results):
         try:
             new_dir.mkdir(exist_ok=True)
             print(f"\nCreating directory: {new_dir}")
+            
+            # Copy DATA.txt if it exists
+            import shutil
+            data_txt_path = original_dir / "DATA.txt"
+            if data_txt_path.exists():
+                shutil.copy2(data_txt_path, new_dir / "DATA.txt")
+                print("Copied DATA.txt to new directory")
+                
+                # If Decimation, we MUST update 'Num de puntos(real)' in DATA.txt
+                # otherwise the app will load it with the original SAMPLE_TIME and the time axis will be wrong
+                if filter_name == "Decimation":
+                    try:
+                        new_data_txt = new_dir / "DATA.txt"
+                        if new_data_txt.exists():
+                            with open(new_data_txt, 'r', encoding='utf-8') as f:
+                                lines = f.readlines()
+                            
+                            # Estimate new number of points (taking the length of the first filtered waveform)
+                            # We can just run the filter on the first file to check length
+                            # But better: we are inside the loop? No, we are before the loop.
+                            # So let's calculate it from the first file.
+                            
+                            # Read first file to get original length
+                            from utils.file_io import read_waveform_file
+                            first_wf = waveform_data.waveform_files[0]
+                            _, amp_temp = read_waveform_file(first_wf)
+                            filtered_temp = apply_current_filter(amp_temp)
+                            new_len = len(filtered_temp)
+                            
+                            updated_lines = []
+                            for line in lines:
+                                if "Num de puntos(real):" in line:
+                                    updated_lines.append(f"Num de puntos(real): {new_len}\n")
+                                else:
+                                    updated_lines.append(line)
+                            
+                            with open(new_data_txt, 'w', encoding='utf-8') as f:
+                                f.writelines(updated_lines)
+                            print(f"Updated DATA.txt with Num de puntos(real): {new_len}")
+                            
+                    except Exception as e:
+                        print(f"Warning: Could not update DATA.txt point count: {e}")
+
+            else:
+                print("Warning: DATA.txt not found in source directory")
+                
         except Exception as e:
             messagebox.showerror("Error", f"No se pudo crear el directorio:\n{e}")
             return
@@ -401,12 +469,29 @@ def show_signal_processing(parent, waveform_data, current_results):
                 filtered_amps = apply_current_filter(amplitudes)
                 
                 # Save to new file
-                new_file_path = new_dir / wf_path.name
+                # Extract index from original filename (assuming format Name_Index.txt)
+                try:
+                    # Get the last part after splitting by '_'
+                    original_stem = wf_path.stem
+                    # Find the last underscore to isolate the index
+                    last_underscore_idx = original_stem.rfind('_')
+                    if last_underscore_idx != -1:
+                        suffix = original_stem[last_underscore_idx:] # e.g., "_0"
+                    else:
+                        # Fallback if no underscore found
+                        suffix = f"_{i}"
+                except:
+                    suffix = f"_{i}"
+
+                # New filename: DirectoryName + Suffix + Extension
+                new_filename = f"{new_dir_name}{suffix}{wf_path.suffix}"
+                new_file_path = new_dir / new_filename
                 
                 # Write filtered data in same format as original
                 with open(new_file_path, 'w') as f:
                     # Write header (t_half)
                     f.write(f"{t_half}\n")
+                    f.write("\n") # Restore blank line required by format
                     # Write filtered amplitudes
                     for amp in filtered_amps:
                         f.write(f"{amp}\n")

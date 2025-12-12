@@ -29,7 +29,9 @@ class WaveformData:
         
     def load_files(self, pattern: str = None) -> int:
         """
-        Load waveform files from directory.
+        Load waveform file list from directory.
+        Calculates lightweight statistics (min/max/times) for plot scaling.
+        Full amplitude data will be collected during analysis.
         
         Args:
             pattern: Glob pattern for file matching (if None, uses directory name)
@@ -45,10 +47,50 @@ class WaveformData:
         self.waveform_files = sorted(self.data_dir.glob(pattern))
         print(f"Loaded {len(self.waveform_files)} files using pattern: {pattern}")
         
+        # Calculate lightweight statistics for plot scaling
         if self.waveform_files:
-            self._calculate_global_statistics()
+            self._calculate_lightweight_statistics()
         
         return len(self.waveform_files)
+    
+    def _calculate_lightweight_statistics(self):
+        """Calculate only min/max/times for plot scaling (lightweight, no full data storage)."""
+        print("Calculating plot scaling parameters...")
+        
+        min_vals = []
+        max_vals = []
+        self.all_max_times = []
+        
+        for wf_file in self.waveform_files:
+            try:
+                t_half, amplitudes = read_waveform_file(wf_file)
+                
+                min_vals.append(np.min(amplitudes))
+                max_vals.append(np.max(amplitudes))
+                
+                # Max time relative to trigger
+                from config import WINDOW_TIME, NUM_POINTS
+                original_sample_time = WINDOW_TIME / NUM_POINTS
+                max_idx = np.argmax(amplitudes)
+                time_rel = (max_idx * original_sample_time) - (WINDOW_TIME / 2)
+                self.all_max_times.append(time_rel)
+                
+                # Don't store amplitudes - saves memory
+            except WaveformError as e:
+                print(f"Skipping {wf_file}: {e}")
+            except Exception as e:
+                print(f"Unexpected error reading {wf_file}: {e}")
+        
+        if min_vals and max_vals:
+            self.global_min_amp = min(min_vals)
+            real_max = max(max_vals)
+            
+            # Add some padding
+            margin = (real_max - self.global_min_amp) * 0.1
+            self.global_min_amp -= margin
+            self.global_max_amp = real_max + margin
+            
+            print(f"Global Scale: {self.global_min_amp*1000:.2f}mV to {self.global_max_amp*1000:.2f}mV")
     
     def _calculate_global_statistics(self):
         """Calculate global amplitude ranges and statistics."""

@@ -4,17 +4,20 @@ Main application window.
 import customtkinter as ctk
 from tkinter import filedialog
 from datetime import datetime
+import threading
+import queue
 
 from config import (
     UI_THEME, UI_COLOR_THEME, MAIN_WINDOW_SIZE,
     COLOR_ACCEPTED, COLOR_REJECTED, COLOR_AFTERPULSE, COLOR_REJECTED_AFTERPULSE
 )
 from controllers.analysis_controller import AnalysisController
+from controllers.app_controller import AppController
+from controllers.export_controller import ExportController
 from views.control_sidebar import ControlSidebar
 from views.plot_panel import PlotPanel
 from views.peak_info_panel import PeakInfoPanel
 from views.popups import show_temporal_distribution, show_all_waveforms, show_charge_histogram
-from utils import ResultsExporter
 
 
 class MainWindow(ctk.CTk):
@@ -27,8 +30,10 @@ class MainWindow(ctk.CTk):
         self.title("Peak Finder")
         self.geometry(MAIN_WINDOW_SIZE)
         
-        # Initialize controller
+        # Initialize controllers
         self.controller = AnalysisController()
+        self.app_controller = AppController(self, self.controller)
+        self.export_controller = ExportController(self)
         
         # Configure grid
         self.grid_columnconfigure(1, weight=1)
@@ -124,6 +129,11 @@ class MainWindow(ctk.CTk):
         self.info_panel.set_hide_callback(self.hide_peak_info)
         # Panel will be shown in column 3 when needed
         
+        # Threading infrastructure for background analysis
+        self.analysis_queue = queue.Queue()
+        self.analysis_running = False
+        self._start_queue_checker()
+        
         # Save initial DATA_DIR as last opened
         from utils import get_config
         import config
@@ -134,11 +144,71 @@ class MainWindow(ctk.CTk):
         self.controller.load_data()
         self.run_analysis()
     
+    def _start_queue_checker(self):
+        """Start periodic queue checking for analysis results."""
+        self._check_analysis_queue()
+    
+    def _check_analysis_queue(self):
+        """Check queue for messages from analysis thread (runs every 100ms)."""
+        try:
+            while True:
+                msg_type, data = self.analysis_queue.get_nowait()
+                
+                if msg_type == "progress":
+                    # Update progress (currently just print, could add progress bar)
+                    print(f"Progreso: {data}")
+                
+                elif msg_type == "complete":
+                    # Analysis finished successfully
+                    self._update_ui_with_results(data)
+                
+                elif msg_type == "error":
+                    # Analysis failed
+                    print(f"Error en análisis: {data}")
+                    self.sidebar.btn_update.configure(state="normal", text="Actualizar")
+                    self.analysis_running = False
+        
+        except queue.Empty:
+            pass
+        
+        # Schedule next check in 100ms
+        self.after(100, self._check_analysis_queue)
+    
     def run_analysis(self):
-        """Run analysis with current parameters."""
+        """Run analysis in background thread to keep UI responsive."""
+        if self.analysis_running:
+            print("Análisis ya en ejecución...")
+            return
+        
         params = self.sidebar.get_parameters()
         
-        results = self.controller.run_analysis(**params)
+        # Disable update button and show status
+        self.sidebar.btn_update.configure(state="disabled", text="Analizando...")
+        self.analysis_running = True
+        
+        # Run analysis in background thread
+        thread = threading.Thread(
+            target=self._run_analysis_thread,
+            args=(params,),
+            daemon=True
+        )
+        thread.start()
+    
+    def _run_analysis_thread(self, params):
+        """Background thread worker for analysis."""
+        try:
+            results = self.controller.run_analysis(**params)
+            self.analysis_queue.put(("complete", results))
+        except Exception as e:
+            import traceback
+            error_msg = f"{str(e)}\n{traceback.format_exc()}"
+            self.analysis_queue.put(("error", error_msg))
+    
+    def _update_ui_with_results(self, results):
+        """Update UI with analysis results (called from main thread)."""
+        # Re-enable update button
+        self.sidebar.btn_update.configure(state="normal", text="Actualizar")
+        self.analysis_running = False
         
         # Update stats
         self.sidebar.update_stats(
@@ -146,9 +216,9 @@ class MainWindow(ctk.CTk):
             accepted=results.get_accepted_count(),
             afterpulse=results.get_afterpulse_count(),
             rejected=results.get_rejected_count(),
-            rejected_ap=0,  # No longer tracking rejected_afterpulse separately
+            rejected_ap=0,
             total_peaks=results.total_peaks,
-            baseline_mv=(results.baseline_high - results.baseline_low) * 1000  # Baseline amplitude in mV
+            baseline_mv=(results.baseline_high - results.baseline_low) * 1000
         )
         
         # Update panel titles
@@ -198,6 +268,15 @@ class MainWindow(ctk.CTk):
         # Determine if we should show afterpulse zone
         show_afterpulse = category == "afterpulse"
         
+        # For favorites, get the original category
+        original_category = None
+        if category == "favorites":
+            original_category = self.controller.results.get_favorite_original_category(result.filename)
+        
+        # Get current negative trigger value from sidebar
+        params = self.sidebar.get_parameters()
+        negative_trigger_mv = params.get('negative_trigger_mv', -10.0)
+        
         panel.update_plot(
             result=result,
             global_min_amp=self.controller.waveform_data.global_min_amp,
@@ -206,9 +285,8 @@ class MainWindow(ctk.CTk):
             baseline_high=self.controller.results.baseline_high,
             max_dist_low=self.controller.results.max_dist_low,
             max_dist_high=self.controller.results.max_dist_high,
-            afterpulse_low=self.controller.results.afterpulse_low,
-            afterpulse_high=self.controller.results.afterpulse_high,
-            show_afterpulse_zone=show_afterpulse
+            negative_trigger_mv=negative_trigger_mv,
+            original_category=original_category
         )
     
     def show_temporal_distribution(self):
@@ -221,12 +299,7 @@ class MainWindow(ctk.CTk):
     
     def show_all_waveforms(self):
         """Show all waveforms popup."""
-        show_all_waveforms(
-            self,
-            self.controller.waveform_data.waveform_files,
-            self.controller.waveform_data.global_min_amp,
-            self.controller.waveform_data.global_max_amp
-        )
+        show_all_waveforms(self, self.controller)
     
     def show_charge_histogram(self):
         """Show charge histogram popup."""
@@ -290,171 +363,14 @@ class MainWindow(ctk.CTk):
         return self.controller.is_favorite(filename)
     
     def save_waveform_set(self, category: str):
-        """Save complete set of waveforms for a category.
-        
-        Args:
-            category: Category name (accepted, rejected, afterpulse, favorites)
-        """
-        from tkinter import filedialog
-        import shutil
-        import config
-        from pathlib import Path
-        
-        # Get the results for this category
-        results_list = self.controller.get_results_for_category(category)
-        
-        if not results_list:
-            print(f"No hay waveforms en la categoría {category}")
-            return
-        
-        # Create category name mapping
-        category_names = {
-            "accepted": "ACEPTADOS",
-            "rejected": "RECHAZADOS",
-            "afterpulse": "AFTERPULSES",
-            "favorites": "FAVORITOS"
-        }
-        
-        category_name = category_names.get(category, category.upper())
-        
-        # Get the dataset name from current DATA_DIR
-        dataset_name = config.DATA_DIR.name
-        
-        # Suggested directory name
-        suggested_name = f"{category_name}_{dataset_name}"
-        
-        # Ask user where to save
-        save_dir = filedialog.askdirectory(
-            title=f"Seleccionar directorio para guardar {category_name}",
-            initialdir=str(config.DATA_DIR.parent)
-        )
-        
-        if not save_dir:
-            return  # User cancelled
-        
-        # Create the target directory
-        target_dir = Path(save_dir) / suggested_name
-        target_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Copy waveform files
-        copied_count = 0
-        for result in results_list:
-            source_file = config.DATA_DIR / result.filename
-            if source_file.exists():
-                target_file = target_dir / result.filename
-                shutil.copy2(source_file, target_file)
-                copied_count += 1
-        
-        # Also copy DATA.txt if it exists
-        data_txt = config.DATA_DIR / "DATA.txt"
-        if data_txt.exists():
-            shutil.copy2(data_txt, target_dir / "DATA.txt")
-        
-        print(f"✓ Guardados {copied_count} archivos en: {target_dir}")
-        print(f"  Categoría: {category_name}")
-        print(f"  Dataset: {dataset_name}")
+        """Save complete set of waveforms for a category."""
+        self.app_controller.save_waveform_set(category)
 
     
     def export_results(self):
         """Export analysis results to file."""
-        # Create custom dialog for format selection
-        format_dialog = ctk.CTkToplevel(self)
-        format_dialog.title("Exportar Resultados")
-        format_dialog.geometry("300x150")
-        format_dialog.transient(self)
-        format_dialog.grab_set()
-        
-        # Center the dialog
-        format_dialog.update_idletasks()
-        x = (format_dialog.winfo_screenwidth() // 2) - (300 // 2)
-        y = (format_dialog.winfo_screenheight() // 2) - (150 // 2)
-        format_dialog.geometry(f"300x150+{x}+{y}")
-        
-        selected_format = [None]  # Use list to allow modification in nested function
-        
-        def select_format(fmt):
-            selected_format[0] = fmt
-            format_dialog.destroy()
-        
-        # Label
-        label = ctk.CTkLabel(
-            format_dialog,
-            text="Selecciona el formato de exportación:",
-            font=ctk.CTkFont(size=13)
-        )
-        label.pack(pady=(20, 15))
-        
-        # Buttons frame
-        btn_frame = ctk.CTkFrame(format_dialog, fg_color="transparent")
-        btn_frame.pack(pady=10)
-        
-        # CSV button
-        csv_btn = ctk.CTkButton(
-            btn_frame,
-            text="📄 CSV",
-            command=lambda: select_format("csv"),
-            width=120,
-            height=40,
-            font=ctk.CTkFont(size=14, weight="bold"),
-            fg_color="#27ae60",
-            hover_color="#229954"
-        )
-        csv_btn.pack(side="left", padx=10)
-        
-        # JSON button
-        json_btn = ctk.CTkButton(
-            btn_frame,
-            text="📊 JSON",
-            command=lambda: select_format("json"),
-            width=120,
-            height=40,
-            font=ctk.CTkFont(size=14, weight="bold"),
-            fg_color="#2980b9",
-            hover_color="#21618c"
-        )
-        json_btn.pack(side="left", padx=10)
-        
-        # Wait for dialog to close
-        self.settings_window = None
-        self.comparison_cache = {}  # Cache for comparison controllers: {path: controller}
-        self.wait_window(format_dialog)
-        
-        if not selected_format[0]:
-            return
-        
-        file_ext = selected_format[0]
-        
-        # Determine file types
-        if file_ext == "csv":
-            file_types = [("CSV files", "*.csv"), ("All files", "*.*")]
-        else:
-            file_types = [("JSON files", "*.json"), ("All files", "*.*")]
-        
-        # Ask for save location
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        default_filename = f"analysis_results_{timestamp}.{file_ext}"
-        
-        filepath = filedialog.asksaveasfilename(
-            defaultextension=f".{file_ext}",
-            filetypes=file_types,
-            initialfile=default_filename,
-            title="Guardar Resultados"
-        )
-        
-        if not filepath:
-            return
-        
-        # Export based on format
-        try:
-            if file_ext == "csv":
-                ResultsExporter.export_analysis_to_csv(self.controller.results, filepath)
-            else:
-                params = self.sidebar.get_parameters()
-                ResultsExporter.export_analysis_to_json(self.controller.results, filepath, params)
-            
-            print(f"✓ Resultados exportados exitosamente a {filepath}")
-        except Exception as e:
-            print(f"Error exportando resultados: {e}")
+        params = self.sidebar.get_parameters()
+        self.export_controller.show_export_dialog(self.controller.results, params)
     
     def on_directory_changed(self):
         """Handle directory change - reload data and rerun analysis."""
@@ -478,76 +394,4 @@ class MainWindow(ctk.CTk):
     
     def open_comparison_window(self):
         """Open comparison configuration and then tabbed comparison window."""
-        from views.popups import show_comparison_config_dialog, show_tabbed_comparison_window
-        from controllers.analysis_controller import AnalysisController
-        from utils import read_data_config
-        import config
-        
-        # Show configuration dialog
-        result = show_comparison_config_dialog(self, config.DATA_DIR)
-        
-        if not result:
-            return  # User cancelled
-        
-        # Ensure cache exists (for hot-reloading stability)
-        if not hasattr(self, 'comparison_cache'):
-            self.comparison_cache = {}
-            
-        dataset2_path, selected_options = result
-        
-        # Check cache
-        if dataset2_path in self.comparison_cache:
-            print(f"Usando controlador en caché para: {dataset2_path}")
-            controller2 = self.comparison_cache[dataset2_path]
-        else:
-            print(f"Cargando y analizando Dataset 2: {dataset2_path}")
-            # Configure temp params
-            data_config = read_data_config(dataset2_path)
-            old_window_time = config.WINDOW_TIME
-            old_trigger = config.TRIGGER_VOLTAGE
-            old_num_points = config.NUM_POINTS
-            old_sample_time = config.SAMPLE_TIME
-            
-            # Update config temporarily
-            if data_config:
-                if 'window_time' in data_config:
-                    config.WINDOW_TIME = data_config['window_time']
-                if 'trigger_voltage' in data_config:
-                    config.TRIGGER_VOLTAGE = data_config['trigger_voltage']
-                if 'num_points' in data_config:
-                    config.NUM_POINTS = data_config['num_points']
-                    config.SAMPLE_TIME = config.WINDOW_TIME / config.NUM_POINTS
-            
-            # Create controller for dataset 2
-            controller2 = AnalysisController(data_dir=dataset2_path)
-            controller2.load_data()
-            
-            # Run analysis with same parameters
-            params = {
-                'prominence_pct': 2.0,
-                'width_time': 0.2e-6,
-                'min_dist_time': 0.05e-6,
-                'baseline_pct': 85.0,
-                'max_dist_pct': 99.0,
-                'afterpulse_pct': 80.0
-            }
-            controller2.run_analysis(**params)
-            
-            # Cache the controller
-            self.comparison_cache[dataset2_path] = controller2
-            
-            # Restore original config
-            config.WINDOW_TIME = old_window_time
-            config.TRIGGER_VOLTAGE = old_trigger
-            config.NUM_POINTS = old_num_points
-            config.SAMPLE_TIME = old_sample_time
-        
-        # Show tabbed comparison window
-        show_tabbed_comparison_window(
-            self, 
-            self.controller, 
-            config.DATA_DIR,
-            controller2,
-            dataset2_path,
-            selected_options
-        )
+        self.app_controller.open_comparison_window()

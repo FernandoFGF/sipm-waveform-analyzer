@@ -12,7 +12,7 @@ from config import WINDOW_TIME, SAMPLE_TIME
 from models.waveform_data import WaveformData
 from models.analysis_results import AnalysisResults, WaveformResult
 from utils.exceptions import WaveformError, AnalysisError
-from utils.baseline_tracker import BaselineTracker
+from models.baseline_tracker import BaselineTracker
 from views.popups import show_error_dialog
 class PeakAnalyzer:
     """Analyzes waveforms for peak detection and classification."""
@@ -33,10 +33,11 @@ class PeakAnalyzer:
         min_dist_time: float,
         baseline_pct: float,
         max_dist_pct: float,
-        afterpulse_pct: float
+        negative_trigger_mv: float
     ) -> AnalysisResults:
         """
         Analyze all waveforms with given parameters.
+        Now calculates global statistics during analysis (single-pass).
         
         Args:
             prominence_pct: Prominence threshold as percentage of amplitude range
@@ -44,28 +45,66 @@ class PeakAnalyzer:
             min_dist_time: Minimum distance between peaks in seconds
             baseline_pct: Baseline percentile range
             max_dist_pct: Max distance zone percentile
-            afterpulse_pct: Afterpulse zone percentile
+            negative_trigger_mv: Negative trigger threshold in mV (reject if any peak below)
             
         Returns:
             AnalysisResults containing classified waveforms
         """
         results = AnalysisResults()
         
-        # Calculate parameters
-        amp_range = self.waveform_data.global_max_amp - self.waveform_data.global_min_amp
-        prominence = (prominence_pct / 100.0) * amp_range
-        width_samples = int(width_time / SAMPLE_TIME)
-        min_dist_samples = int(min_dist_time / SAMPLE_TIME)
-        if min_dist_samples < 1:
-            min_dist_samples = 1
+        # First pass: Analyze waveforms and collect statistics simultaneously
+        num_files = len(self.waveform_data.waveform_files)
+        use_parallel = num_files > 50
         
-        # Calculate baseline range
+        print(f"Analyzing {num_files} files {'in parallel' if use_parallel else 'sequentially'}...")
+        
+        # Analyze waveforms (this reads files for the first and only time)
+        if use_parallel:
+            wf_results = self._analyze_waveforms_parallel_initial(
+                prominence_pct,
+                width_time,
+                min_dist_time
+            )
+        else:
+            wf_results = self._analyze_waveforms_sequential_initial(
+                prominence_pct,
+                width_time,
+                min_dist_time
+            )
+        
+        # Collect global statistics from results
+        print("Collecting amplitude data for baseline calculation...")
+        all_data_list = []
+        
+        for wf_result in wf_results:
+            if wf_result is None:
+                continue
+            
+            all_data_list.append(wf_result.amplitudes)
+        
+        # Store full amplitude data for percentile calculations
+        # (min/max/times were already calculated during load_files)
+        if all_data_list:
+            self.waveform_data.all_amplitudes_flat = np.concatenate(all_data_list)
+        
+        # Calculate baseline range from all amplitudes (excluding points above trigger)
         if len(self.waveform_data.all_amplitudes_flat) > 0:
-            low_p = (100 - baseline_pct) / 2
-            high_p = 100 - low_p
-            results.baseline_low = np.percentile(self.waveform_data.all_amplitudes_flat, low_p)
-            results.baseline_high = np.percentile(self.waveform_data.all_amplitudes_flat, high_p)
-            print(f"Baseline ({baseline_pct}%): {results.baseline_low*1000:.2f}mV - {results.baseline_high*1000:.2f}mV")
+            from config import TRIGGER_VOLTAGE
+            
+            # Filter out points above trigger voltage (these are signal, not baseline)
+            baseline_amplitudes = self.waveform_data.all_amplitudes_flat[
+                self.waveform_data.all_amplitudes_flat <= TRIGGER_VOLTAGE
+            ]
+            
+            if len(baseline_amplitudes) > 0:
+                low_p = (100 - baseline_pct) / 2
+                high_p = 100 - low_p
+                results.baseline_low = np.percentile(baseline_amplitudes, low_p)
+                results.baseline_high = np.percentile(baseline_amplitudes, high_p)
+                print(f"Baseline ({baseline_pct}%, {len(baseline_amplitudes)} pts below trigger): "
+                      f"{results.baseline_low*1000:.2f}mV - {results.baseline_high*1000:.2f}mV")
+            else:
+                print("Warning: No amplitudes below trigger voltage for baseline calculation")
         
         # Calculate max dist range
         if len(self.waveform_data.all_max_times) > 0:
@@ -75,42 +114,62 @@ class PeakAnalyzer:
             results.max_dist_high = np.percentile(self.waveform_data.all_max_times, high_p)
             print(f"Max Dist ({max_dist_pct}%): {results.max_dist_low*1e6:.2f}µs - {results.max_dist_high*1e6:.2f}µs")
         
-        # Analyze waveforms (parallel if many files, sequential if few)
-        num_files = len(self.waveform_data.waveform_files)
-        use_parallel = num_files > 50  # Use parallel processing for >50 files
-        
-        print(f"Analyzing {num_files} files {'in parallel' if use_parallel else 'sequentially'}...")
-        
-        if use_parallel:
-            # Parallel processing for large datasets
-            wf_results = self._analyze_waveforms_parallel(
-                prominence,
-                width_samples,
-                min_dist_samples,
-                results.baseline_high,
-                results.max_dist_low,
-                results.max_dist_high
-            )
-        else:
-            # Sequential processing for small datasets
-            wf_results = self._analyze_waveforms_sequential(
-                prominence,
-                width_samples,
-                min_dist_samples,
-                results.baseline_high,
-                results.max_dist_low,
-                results.max_dist_high
-            )
-        
-        # Classify results
+        # Now filter and classify results using calculated thresholds
+        from config import SAMPLE_TIME, WINDOW_TIME
         afterpulse_times = []
+        negative_trigger_v = negative_trigger_mv / 1000.0  # Convert mV to V
         
         for wf_result in wf_results:
-            if wf_result is None:  # Skip failed analyses
+            if wf_result is None:
                 continue
+            
+            
+            # Check for perturbation (negative trigger violation)
+            # Count downward crossings: if signal crosses down 2+ times, it's perturbation
+            has_perturbation = False
+            min_amplitude = np.min(wf_result.amplitudes)
+            
+            if min_amplitude < negative_trigger_v:
+                # Detect downward crossings through the threshold
+                # A crossing happens when signal goes from above to below threshold
+                below_threshold = wf_result.amplitudes < negative_trigger_v
                 
-            good_peaks = wf_result.peaks
-            all_peaks = wf_result.all_peaks
+                # diff = 1 means transition from above (False) to below (True) = downward crossing
+                transitions = np.diff(below_threshold.astype(int))
+                downward_crossings = np.sum(transitions == 1)
+                
+                # Require at least 2 downward crossings to mark as perturbation
+                if downward_crossings >= 2:
+                    has_perturbation = True
+                    # Mark ALL peaks as perturbation
+                    for p_idx in wf_result.all_peaks:
+                        wf_result.peak_rejection_reasons[p_idx] = (
+                            f"Perturbación ({downward_crossings} cruces hacia abajo del trigger negativo, "
+                            f"mín: {min_amplitude*1000:.2f}mV)"
+                        )
+            
+            if has_perturbation:
+                # Reject entire waveform due to perturbation
+                wf_result.peaks = np.array([])  # No valid peaks
+                results.rejected_results.append(wf_result)
+                continue
+            
+            # Filter peaks by baseline and track rejections
+            good_peaks = []
+            for p_idx in wf_result.peaks:
+                if wf_result.amplitudes[p_idx] > results.baseline_high:
+                    good_peaks.append(p_idx)
+                else:
+                    # Track rejection reason
+                    wf_result.peak_rejection_reasons[p_idx] = (
+                        f"Amplitud bajo baseline ({wf_result.amplitudes[p_idx]*1000:.2f}mV ≤ "
+                        f"{results.baseline_high*1000:.2f}mV)"
+                    )
+            
+            good_peaks = np.array(good_peaks) if good_peaks else np.array([])
+            
+            # Update result with filtered peaks
+            wf_result.peaks = good_peaks
             
             # Find main candidates (good peaks inside max dist zone)
             main_candidates = self._find_main_candidates(
@@ -122,6 +181,14 @@ class PeakAnalyzer:
             
             if len(main_candidates) == 0:
                 # Rejected - no valid peaks in max dist zone
+                # Track rejection for peaks outside max dist zone
+                for p_idx in good_peaks:
+                    t_rel = (p_idx * SAMPLE_TIME) - (WINDOW_TIME / 2)
+                    if t_rel < results.max_dist_low or t_rel > results.max_dist_high:
+                        wf_result.peak_rejection_reasons[p_idx] = (
+                            f"Fuera de zona de máximos ({t_rel*1e6:.2f}µs no en "
+                            f"[{results.max_dist_low*1e6:.2f}, {results.max_dist_high*1e6:.2f}]µs)"
+                        )
                 results.rejected_results.append(wf_result)
             else:
                 # Accepted or Afterpulse
@@ -141,39 +208,211 @@ class PeakAnalyzer:
                     results.accepted_results.append(wf_result)
                     results.total_peaks += 1
         
-        # Calculate afterpulse range
-        if len(afterpulse_times) > 0:
-            low_p = (100 - afterpulse_pct) / 2
-            high_p = 100 - low_p
-            results.afterpulse_low = np.percentile(afterpulse_times, low_p)
-            results.afterpulse_high = np.percentile(afterpulse_times, high_p)
-            print(f"Afterpulse ({afterpulse_pct}%): {results.afterpulse_low*1e6:.2f}µs - {results.afterpulse_high*1e6:.2f}µs")
+        
+        # Note: Afterpulse zone calculation removed - not needed
+        # Afterpulse classification (multiple peaks) is still done above
         
         # Calculate and track baseline amplitude from accepted results only
         if len(results.accepted_results) > 0:
-            # Collect all amplitudes from accepted waveforms
             accepted_amplitudes = []
             for wf_result in results.accepted_results:
                 accepted_amplitudes.extend(wf_result.amplitudes)
             
             if len(accepted_amplitudes) > 0:
+                from config import TRIGGER_VOLTAGE
                 accepted_amplitudes = np.array(accepted_amplitudes)
-                # Calculate baseline range from accepted results
-                low_p = (100 - baseline_pct) / 2
-                high_p = 100 - low_p
-                baseline_low_accepted = np.percentile(accepted_amplitudes, low_p)
-                baseline_high_accepted = np.percentile(accepted_amplitudes, high_p)
                 
-                # Calculate baseline amplitude (range)
-                baseline_amplitude_mv = (baseline_high_accepted - baseline_low_accepted) * 1000
+                # Filter out points above trigger voltage
+                baseline_accepted_amps = accepted_amplitudes[accepted_amplitudes <= TRIGGER_VOLTAGE]
                 
-                # Track baseline for historical comparison
-                tracker = BaselineTracker()
-                tracker.add_baseline(baseline_amplitude_mv)
-                
-                print(f"Baseline amplitude (accepted only): {baseline_amplitude_mv:.2f}mV")
+                if len(baseline_accepted_amps) > 0:
+                    low_p = (100 - baseline_pct) / 2
+                    high_p = 100 - low_p
+                    baseline_low_accepted = np.percentile(baseline_accepted_amps, low_p)
+                    baseline_high_accepted = np.percentile(baseline_accepted_amps, high_p)
+                    
+                    baseline_amplitude_mv = (baseline_high_accepted - baseline_low_accepted) * 1000
+                    
+                    # Track baseline for historical comparison
+                    tracker = BaselineTracker()
+                    tracker.add_baseline(baseline_amplitude_mv)
+                    
+                    print(f"Baseline amplitude (accepted only, {len(baseline_accepted_amps)} pts): {baseline_amplitude_mv:.2f}mV")
         
         return results
+    
+    def _analyze_waveforms_sequential_initial(
+        self,
+        prominence_pct: float,
+        width_time: float,
+        min_dist_time: float
+    ) -> List[WaveformResult]:
+        """Analyze waveforms sequentially without pre-calculated thresholds."""
+        results = []
+        width_samples = int(width_time / SAMPLE_TIME)
+        min_dist_samples = int(min_dist_time / SAMPLE_TIME)
+        if min_dist_samples < 1:
+            min_dist_samples = 1
+        
+        # Use a rough estimate for prominence (will be refined later)
+        # Assume typical range is 0 to 0.1V
+        rough_prominence = (prominence_pct / 100.0) * 0.1
+        
+        for wf_file in self.waveform_data.waveform_files:
+            try:
+                wf_result = self._analyze_single_waveform_initial(
+                    wf_file,
+                    rough_prominence,
+                    width_samples,
+                    min_dist_samples
+                )
+                results.append(wf_result)
+            except (WaveformError, AnalysisError) as e:
+                print(f"Error analyzing {wf_file}: {e}")
+                results.append(None)
+            except Exception as e:
+                print(f"Unexpected error analyzing {wf_file}: {e}")
+                results.append(None)
+        
+        return results
+    
+    def _analyze_waveforms_parallel_initial(
+        self,
+        prominence_pct: float,
+        width_time: float,
+        min_dist_time: float
+    ) -> List[WaveformResult]:
+        """Analyze waveforms in parallel without pre-calculated thresholds."""
+        results = []
+        num_workers = min(multiprocessing.cpu_count(), 8)
+        
+        print(f"Using {num_workers} parallel workers...")
+        
+        width_samples = int(width_time / SAMPLE_TIME)
+        min_dist_samples = int(min_dist_time / SAMPLE_TIME)
+        if min_dist_samples < 1:
+            min_dist_samples = 1
+        
+        rough_prominence = (prominence_pct / 100.0) * 0.1
+        
+        args_list = [
+            (wf_file, rough_prominence, width_samples, min_dist_samples)
+            for wf_file in self.waveform_data.waveform_files
+        ]
+        
+        with ProcessPoolExecutor(max_workers=num_workers) as executor:
+            future_to_file = {
+                executor.submit(self._analyze_single_waveform_initial_wrapper, args): args[0]
+                for args in args_list
+            }
+            
+            completed = 0
+            total = len(future_to_file)
+            
+            for future in as_completed(future_to_file):
+                wf_file = future_to_file[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+                except Exception as e:
+                    print(f"Error analyzing {wf_file}: {e}")
+                    results.append(None)
+                
+                completed += 1
+                if completed % 100 == 0:
+                    print(f"Progress: {completed}/{total} files analyzed")
+        
+        return results
+    
+    @staticmethod
+    def _analyze_single_waveform_initial_wrapper(args):
+        """Wrapper for parallel processing (initial pass)."""
+        wf_file, prominence, width_samples, min_dist_samples = args
+        
+        from models.waveform_data import WaveformData
+        waveform_data = WaveformData()
+        
+        t_half, amplitudes = waveform_data.read_waveform_file(wf_file)
+        
+        # Find peaks with rough prominence
+        peaks, properties = find_peaks(
+            amplitudes,
+            height=0.0,
+            prominence=prominence,
+            width=0,
+            distance=min_dist_samples
+        )
+        
+        # Store ALL detected peaks before filtering (for visualization)
+        all_detected_peaks = peaks.copy()
+        rejection_reasons = {}
+        
+        # Filter by width and track rejections
+        if 'widths' in properties:
+            widths = properties['widths']
+            passing_peaks = []
+            for i, p_idx in enumerate(peaks):
+                if widths[i] >= width_samples:
+                    passing_peaks.append(p_idx)
+                else:
+                    # Track rejection reason
+                    rejection_reasons[p_idx] = f"Anchura insuficiente ({widths[i]:.1f} < {width_samples} samples)"
+            peaks = np.array(passing_peaks) if passing_peaks else np.array([])
+        
+        return WaveformResult(
+            filename=wf_file.name,
+            t_half=t_half,
+            amplitudes=amplitudes,
+            peaks=peaks,
+            all_peaks=all_detected_peaks,  # All peaks including rejected by width
+            properties=properties,
+            peak_rejection_reasons=rejection_reasons
+        )
+    
+    def _analyze_single_waveform_initial(
+        self,
+        wf_file: Path,
+        prominence: float,
+        width_samples: int,
+        min_dist_samples: int
+    ) -> WaveformResult:
+        """Analyze a single waveform without pre-calculated thresholds."""
+        t_half, amplitudes = self.waveform_data.read_waveform_file(wf_file)
+        
+        # Find peaks
+        peaks, properties = find_peaks(
+            amplitudes,
+            height=0.0,
+            prominence=prominence,
+            width=0,
+            distance=min_dist_samples
+        )
+        
+        # Store ALL detected peaks before filtering (for visualization)
+        all_detected_peaks = peaks.copy()
+        rejection_reasons = {}
+        
+        # Filter by width and track rejections
+        if 'widths' in properties:
+            widths = properties['widths']
+            passing_peaks = []
+            for i, p_idx in enumerate(peaks):
+                if widths[i] >= width_samples:
+                    passing_peaks.append(p_idx)
+                else:
+                    # Track rejection reason
+                    rejection_reasons[p_idx] = f"Anchura insuficiente ({widths[i]:.1f} < {width_samples} samples)"
+            peaks = np.array(passing_peaks) if passing_peaks else np.array([])
+        
+        return WaveformResult(
+            filename=wf_file.name,
+            t_half=t_half,
+            amplitudes=amplitudes,
+            peaks=peaks,
+            all_peaks=all_detected_peaks,  # All peaks including rejected by width
+            properties=properties,
+            peak_rejection_reasons=rejection_reasons
+        )
     
     def _analyze_waveforms_sequential(
         self,

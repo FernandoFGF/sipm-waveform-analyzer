@@ -14,7 +14,7 @@ import json
 import pandas as pd
 
 from config import SAMPLE_TIME, WINDOW_TIME, NUM_POINTS
-from utils.pulse_analysis import (
+from models.pulse_analysis import (
     calculate_rise_time, calculate_fall_time, calculate_fwhm,
     fit_exponential_recovery, extract_pulse_template, perform_pulse_pca,
     calculate_pulse_area, fit_gaussian_jitter

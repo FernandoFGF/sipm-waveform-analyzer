@@ -10,7 +10,7 @@ import numpy as np
 from config import WINDOW_TIME, SAMPLE_TIME
 from utils import get_config, ResultsExporter
 from utils.plotting import save_figure
-from utils.signal_processing import SiPMAnalyzer
+from models.signal_processing import SiPMAnalyzer
 from views.popups.base_popup import BasePopup
 
 def show_temporal_distribution(parent, accepted_results, afterpulse_results):
@@ -31,9 +31,9 @@ def show_temporal_distribution(parent, accepted_results, afterpulse_results):
     # Create main frame with three columns
     main_frame = ctk.CTkFrame(window)
     main_frame.pack(fill="both", expand=True, padx=10, pady=10)
-    main_frame.grid_columnconfigure(0, weight=1)  # Controls
+    main_frame.grid_columnconfigure(0, weight=2)  # Controls (wider)
     main_frame.grid_columnconfigure(1, weight=3)  # Plot
-    main_frame.grid_columnconfigure(2, weight=1)  # Metrics
+    main_frame.grid_columnconfigure(2, weight=2)  # Metrics (wider)
     main_frame.grid_rowconfigure(0, weight=1)
     
     # Left: Controls panel

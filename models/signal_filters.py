@@ -143,30 +143,69 @@ def calculate_snr_improvement(original, filtered):
     Returns:
         SNR improvement in dB
     """
+    if len(original) < 10 or len(filtered) < 10:
+        return 0.0
+
     # Estimate signal as the peak region
     peak_idx = np.argmax(np.abs(original))
-    signal_window = slice(max(0, peak_idx - 20), min(len(original), peak_idx + 20))
+    # Ensure window is valid
+    start = max(0, peak_idx - 20)
+    end = min(len(original), peak_idx + 20)
+    if start >= end:
+        return 0.0
+        
+    signal_window = slice(start, end)
     
     # Estimate noise from baseline region (first 100 samples)
-    noise_window = slice(0, min(100, len(original) // 4))
+    # Ensure at least some samples
+    noise_end = min(100, len(original) // 4)
+    if noise_end < 2:
+        noise_end = min(10, len(original))
+        
+    noise_window = slice(0, noise_end)
     
-    # Calculate SNR for original
-    signal_power_orig = np.var(original[signal_window])
-    noise_power_orig = np.var(original[noise_window])
-    snr_orig = signal_power_orig / noise_power_orig if noise_power_orig > 0 else 1
-    
-    # Calculate SNR for filtered
-    signal_power_filt = np.var(filtered[signal_window])
-    noise_power_filt = np.var(filtered[noise_window])
-    snr_filt = signal_power_filt / noise_power_filt if noise_power_filt > 0 else 1
-    
-    # SNR improvement in dB
-    if snr_orig > 0:
-        improvement_db = 10 * np.log10(snr_filt / snr_orig)
-    else:
-        improvement_db = 0
-    
-    return improvement_db
+    try:
+        # Calculate SNR for original
+        # Use simple variance calculation, handling potential warnings
+        signal_power_orig = np.var(original[signal_window]) if len(original[signal_window]) > 1 else 0
+        noise_power_orig = np.var(original[noise_window]) if len(original[noise_window]) > 1 else 1e-10
+        
+        if noise_power_orig <= 0: noise_power_orig = 1e-10
+            
+        snr_orig = signal_power_orig / noise_power_orig
+        
+        # Calculate SNR for filtered
+        # Adjust indices for filtered signal (might be decimated)
+        scale_factor = len(filtered) / len(original)
+        
+        f_peak_idx = int(peak_idx * scale_factor)
+        f_start = max(0, f_peak_idx - int(20 * scale_factor))
+        f_end = min(len(filtered), f_peak_idx + int(20 * scale_factor))
+        
+        f_signal_window = slice(f_start, f_end)
+        f_noise_window = slice(0, int(noise_end * scale_factor))
+        
+        if len(filtered[f_signal_window]) < 2 or len(filtered[f_noise_window]) < 2:
+           # If filtered signal dimensions are too small/weird, return 0 improvement
+           return 0.0
+
+        signal_power_filt = np.var(filtered[f_signal_window])
+        noise_power_filt = np.var(filtered[f_noise_window])
+        
+        if noise_power_filt <= 0: noise_power_filt = 1e-10
+
+        snr_filt = signal_power_filt / noise_power_filt
+        
+        # SNR improvement in dB
+        if snr_orig > 0 and snr_filt > 0:
+            improvement_db = 10 * np.log10(snr_filt / snr_orig)
+        else:
+            improvement_db = 0
+            
+        return improvement_db
+    except Exception as e:
+        print(f"Error calculating SNR: {e}")
+        return 0.0
 
 
 def calculate_rms_noise(amplitudes, noise_window_size=100):
@@ -180,5 +219,15 @@ def calculate_rms_noise(amplitudes, noise_window_size=100):
     Returns:
         RMS noise value
     """
-    baseline = amplitudes[:min(noise_window_size, len(amplitudes) // 4)]
+    if len(amplitudes) == 0:
+        return 0.0
+        
+    limit = min(noise_window_size, len(amplitudes) // 4)
+    if limit < 2:
+        limit = len(amplitudes) # Fallback to whole signal if tiny
+        
+    baseline = amplitudes[:limit]
+    if len(baseline) == 0:
+        return 0.0
+        
     return np.sqrt(np.mean(baseline**2))

@@ -4,8 +4,8 @@ Analysis controller - orchestrates the analysis workflow.
 from models.waveform_data import WaveformData
 from models.peak_analyzer import PeakAnalyzer
 from models.analysis_results import AnalysisResults, WaveformResult
-from utils.results_cache import ResultsCache
-from utils.favorites_manager import FavoritesManager
+from models.results_cache import ResultsCache
+from models.favorites_manager import FavoritesManager
 import config
 
 
@@ -49,7 +49,7 @@ class AnalysisController:
         min_dist_time: float,
         baseline_pct: float,
         max_dist_pct: float,
-        afterpulse_pct: float
+        negative_trigger_mv: float
     ) -> AnalysisResults:
         """
         Run peak analysis with given parameters.
@@ -60,7 +60,7 @@ class AnalysisController:
             min_dist_time: Minimum distance in seconds
             baseline_pct: Baseline percentile
             max_dist_pct: Max distance percentile
-            afterpulse_pct: Afterpulse percentile
+            negative_trigger_mv: Negative trigger threshold in mV
             
         Returns:
             Analysis results
@@ -72,7 +72,7 @@ class AnalysisController:
             'min_dist_time': min_dist_time,
             'baseline_pct': baseline_pct,
             'max_dist_pct': max_dist_pct,
-            'afterpulse_pct': afterpulse_pct
+            'negative_trigger_mv': negative_trigger_mv
         }
         
         # Generate cache key including DATA_DIR to differentiate datasets
@@ -97,7 +97,7 @@ class AnalysisController:
                 min_dist_time,
                 baseline_pct,
                 max_dist_pct,
-                afterpulse_pct
+                negative_trigger_mv
             )
             
             # Save to cache

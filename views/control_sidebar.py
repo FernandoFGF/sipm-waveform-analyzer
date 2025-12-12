@@ -7,7 +7,7 @@ from typing import Callable
 import config
 from config import (
     DEFAULT_PROMINENCE_PCT, DEFAULT_WIDTH_TIME, DEFAULT_MIN_DIST_TIME,
-    DEFAULT_BASELINE_PCT, DEFAULT_MAX_DIST_PCT, DEFAULT_AFTERPULSE_PCT
+    DEFAULT_BASELINE_PCT, DEFAULT_MAX_DIST_PCT, DEFAULT_NEGATIVE_TRIGGER_MV
 )
 from utils import get_config
 
@@ -206,6 +206,19 @@ class ControlSidebar(ctk.CTkFrame):
             )
             self.btn_export.grid(row=3, column=1, padx=5, pady=5, sticky="ew")
         
+        # Row 5: Limpiar Caché (spans both columns)
+        self.btn_clear_cache = ctk.CTkButton(
+            button_frame,
+            text="🗑️ Limpiar Caché",
+            command=self._clear_cache,
+            fg_color="#c0392b",
+            hover_color="#a93226",
+            width=230,
+            height=35,
+            font=ctk.CTkFont(size=12)
+        )
+        self.btn_clear_cache.grid(row=4, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
+        
         # Stats label (moved below button grid)
         self.stats_label = ctk.CTkLabel(self, text="Cargando...", justify="left")
         self.stats_label.grid(row=14, column=0, padx=20, pady=10, sticky="w")
@@ -260,13 +273,14 @@ class ControlSidebar(ctk.CTkFrame):
         self.entry_maxdist.insert(0, str(DEFAULT_MAX_DIST_PCT))
         self.entry_maxdist.grid(row=8, column=0, padx=20, pady=(0, 10), sticky="ew")
         
-        # Afterpulse %
-        self.lbl_afterpulse = ctk.CTkLabel(self, text="Afterpulse (%):")
-        self.lbl_afterpulse.grid(row=9, column=0, padx=20, pady=(10, 0), sticky="w")
         
-        self.entry_afterpulse = ctk.CTkEntry(self)
-        self.entry_afterpulse.insert(0, str(DEFAULT_AFTERPULSE_PCT))
-        self.entry_afterpulse.grid(row=10, column=0, padx=20, pady=(0, 10), sticky="ew")
+        # Negative Trigger
+        self.lbl_negative_trigger = ctk.CTkLabel(self, text="Trigger Negativo (mV):")
+        self.lbl_negative_trigger.grid(row=9, column=0, padx=20, pady=(10, 0), sticky="w")
+        
+        self.entry_negative_trigger = ctk.CTkEntry(self)
+        self.entry_negative_trigger.insert(0, str(DEFAULT_NEGATIVE_TRIGGER_MV))
+        self.entry_negative_trigger.grid(row=10, column=0, padx=20, pady=(0, 10), sticky="ew")
         
         # Min Distance
         self.lbl_mindist = ctk.CTkLabel(self, text="Dist. Min. (µs):")
@@ -294,7 +308,7 @@ class ControlSidebar(ctk.CTkFrame):
                 'min_dist_time': float(self.entry_mindist.get()) * 1e-6,
                 'baseline_pct': float(self.entry_baseline.get()),
                 'max_dist_pct': float(self.entry_maxdist.get()),
-                'afterpulse_pct': float(self.entry_afterpulse.get())
+                'negative_trigger_mv': float(self.entry_negative_trigger.get())
             }
         except ValueError:
             # Return defaults on error
@@ -304,7 +318,7 @@ class ControlSidebar(ctk.CTkFrame):
                 'min_dist_time': DEFAULT_MIN_DIST_TIME,
                 'baseline_pct': DEFAULT_BASELINE_PCT,
                 'max_dist_pct': DEFAULT_MAX_DIST_PCT,
-                'afterpulse_pct': DEFAULT_AFTERPULSE_PCT
+                'negative_trigger_mv': DEFAULT_NEGATIVE_TRIGGER_MV
             }
     
     def update_stats(self, total_files: int, accepted: int, afterpulse: int, 
@@ -325,7 +339,7 @@ class ControlSidebar(ctk.CTkFrame):
     
     def _update_baseline_indicator(self, baseline_mv: float):
         """Update baseline indicator with current value and comparison."""
-        from utils.baseline_tracker import BaselineTracker
+        from models.baseline_tracker import BaselineTracker
         
         tracker = BaselineTracker()
         comparison = tracker.get_comparison()
@@ -380,9 +394,10 @@ class ControlSidebar(ctk.CTkFrame):
         self.entry_maxdist.delete(0, 'end')
         self.entry_maxdist.insert(0, str(saved_params['max_dist_pct']))
         
-        # Load afterpulse
-        self.entry_afterpulse.delete(0, 'end')
-        self.entry_afterpulse.insert(0, str(saved_params['afterpulse_pct']))
+        
+        # Load negative trigger
+        self.entry_negative_trigger.delete(0, 'end')
+        self.entry_negative_trigger.insert(0, str(saved_params.get('negative_trigger_mv', DEFAULT_NEGATIVE_TRIGGER_MV)))
         
         # Load min distance
         self.entry_mindist.delete(0, 'end')
@@ -414,26 +429,11 @@ class ControlSidebar(ctk.CTkFrame):
         if not selected_dir:
             return  # User cancelled
         
-        # Update the global DATA_DIR
-        config.DATA_DIR = Path(selected_dir)
+        # Validate and update global config
+        config.recalculate_config(selected_dir)
         
         # Save as last opened directory
         self.config.save_last_data_dir(selected_dir)
-        
-        print(f"✓ Directorio cambiado a: {selected_dir}")
-        
-        # Reload configuration from DATA.txt if available
-        data_config = read_data_config(config.DATA_DIR)
-        
-        if data_config:
-            # Update global config values
-            if 'window_time' in data_config:
-                config.WINDOW_TIME = data_config['window_time']
-            if 'trigger_voltage' in data_config:
-                config.TRIGGER_VOLTAGE = data_config['trigger_voltage']
-            if 'num_points' in data_config:
-                config.NUM_POINTS = data_config['num_points']
-                config.SAMPLE_TIME = config.WINDOW_TIME / config.NUM_POINTS
         
         # Notify parent to reload data and rerun analysis
         if self.on_directory_changed:
@@ -451,3 +451,30 @@ class ControlSidebar(ctk.CTkFrame):
     def set_comparison_callback(self, callback):
         """Set callback for opening comparison window."""
         self.on_open_comparison = callback
+    
+    def _clear_cache(self):
+        """Clear the analysis cache."""
+        import shutil
+        from pathlib import Path
+        from tkinter import messagebox
+        
+        cache_dir = Path(".cache")
+        
+        if cache_dir.exists():
+            try:
+                shutil.rmtree(cache_dir)
+                messagebox.showinfo(
+                    "Caché Limpiada",
+                    "La caché ha sido eliminada correctamente.\n\n"
+                    "El próximo análisis se ejecutará desde cero."
+                )
+            except Exception as e:
+                messagebox.showerror(
+                    "Error",
+                    f"No se pudo eliminar la caché:\n{str(e)}"
+                )
+        else:
+            messagebox.showinfo(
+                "Caché Vacía",
+                "No hay caché para limpiar."
+            )

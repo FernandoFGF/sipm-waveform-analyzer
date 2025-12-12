@@ -14,7 +14,7 @@ class ComparisonConfigDialog(ctk.CTkToplevel):
         super().__init__(parent)
         
         self.title("Configurar Comparación")
-        self.geometry("500x500")
+        self.geometry("500x700")
         
         # Make modal
         self.transient(parent)
