@@ -5,6 +5,7 @@ import customtkinter as ctk
 import tkinter as tk
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.widgets import RectangleSelector
 import numpy as np
 
 from config import WINDOW_TIME, SAMPLE_TIME
@@ -80,9 +81,36 @@ def show_temporal_distribution(parent, accepted_results, afterpulse_results):
     diffs = np.diff(times)
     amps_plot = amps[1:] * 1000  # Convert to mV
     
+    # Create mapping from peak index to waveform result
+    # This allows us to find which waveform a selected peak belongs to
+    peak_to_waveform = []
+    for res in all_results:
+        t_half = res.t_half
+        peaks_indices = res.peaks
+        amplitudes = res.amplitudes
+        t_start_window = t_half - (WINDOW_TIME / 2)
+        
+        for p_idx in peaks_indices:
+            t_rel = p_idx * SAMPLE_TIME
+            t_global = t_start_window + t_rel
+            amp = amplitudes[p_idx]
+            # Store: (diff_time, amplitude_mV, waveform_result)
+            peak_to_waveform.append((t_global, amp * 1000, res))
+    
+    # Sort by global time to match diffs array
+    peak_to_waveform.sort(key=lambda x: x[0])
+    
     # Variables to store current canvas and metrics widgets
-    canvas_ref = {'canvas': None, 'fig': None}
+    canvas_ref = {'canvas': None, 'fig': None, 'selector': None}
     metrics_widgets = {'widgets': [], 'metrics': None}  # Store metrics object
+    
+    # Selection state
+    selection_state = {
+        'active': False,
+        'filtered_results': [],
+        'current_index': 0,
+        'bounds': None  # (time_min, time_max, amp_min, amp_max)
+    }
     
     def update_metrics_display(metrics):
         """Update the metrics panel with new values."""
@@ -219,6 +247,53 @@ def show_temporal_distribution(parent, accepted_results, afterpulse_results):
         dcr_count_label = ctk.CTkLabel(dcr_frame, text=f"Eventos: {metrics.dcr_count:,}",
                                       font=ctk.CTkFont(size=10))
         dcr_count_label.pack(pady=(5, 10))
+    
+    def on_rectangle_select(eclick, erelease):
+        """Handle rectangle selection on scatter plot."""
+        if eclick is None or erelease is None:
+            return
+        
+        # Get selection bounds
+        x1, x2 = sorted([eclick.xdata, erelease.xdata])
+        y1, y2 = sorted([eclick.ydata, erelease.ydata])
+        
+        if x1 is None or y1 is None:
+            return
+        
+        # Filter waveforms within selection
+        # Note: peak_to_waveform[i+1] corresponds to diffs[i] and amps_plot[i]
+        filtered = set()
+        for i in range(len(diffs)):
+            if x1 <= diffs[i] <= x2 and y1 <= amps_plot[i] <= y2:
+                # Get the waveform result for this peak
+                _, _, wf_result = peak_to_waveform[i + 1]  # +1 because diffs is diff of times
+                filtered.add(wf_result.filename)
+        
+        # Convert to list of results
+        selection_state['filtered_results'] = [r for r in all_results if r.filename in filtered]
+        selection_state['active'] = len(selection_state['filtered_results']) > 0
+        selection_state['current_index'] = 0
+        selection_state['bounds'] = (x1, x2, y1, y2)
+        
+        # Update selection info
+        # Selection complete
+        
+        print(f"Selected {len(selection_state['filtered_results'])} waveforms in region:")
+        print(f"  Time: {x1*1e6:.2f} - {x2*1e6:.2f} µs")
+        print(f"  Amplitude: {y1:.2f} - {y2:.2f} mV")
+        
+        # Automatically open viewer window if selection is valid
+        if selection_state['active']:
+            show_current_waveform()
+    
+    def clear_selection():
+        """Clear the current selection."""
+        selection_state['active'] = False
+        selection_state['filtered_results'] = []
+        selection_state['current_index'] = 0
+        selection_state['bounds'] = None
+        # Selection cleared
+        print("Selection cleared")
 
     def update_plot(amp_threshold, time_threshold):
         """Update plot and metrics with new thresholds."""
@@ -279,9 +354,23 @@ def show_temporal_distribution(parent, accepted_results, afterpulse_results):
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
         
+        # Add rectangle selector for interactive selection
+        selector = RectangleSelector(
+            ax,
+            on_rectangle_select,
+            useblit=True,
+            button=[1],  # Left mouse button
+            minspanx=5,
+            minspany=5,
+            spancoords='pixels',
+            interactive=True,
+            props=dict(facecolor='yellow', edgecolor='orange', alpha=0.3, fill=True)
+        )
+        
         # Store references
         canvas_ref['canvas'] = canvas
         canvas_ref['fig'] = fig
+        canvas_ref['selector'] = selector
         
         # Setup context menu for this plot
         context_menu = tk.Menu(window, tearoff=0)
@@ -402,6 +491,110 @@ def show_temporal_distribution(parent, accepted_results, afterpulse_results):
         hover_color="#2980b9"
     )
     save_config_btn.pack(pady=(0, 10), padx=10)
+    
+    # Store reference to viewer window
+    viewer_window_ref = {'window': None}
+    
+    def show_current_waveform():
+        """Show the current waveform from filtered results in a popup window."""
+        if not selection_state['active'] or not selection_state['filtered_results']:
+            return
+        
+        current_result = selection_state['filtered_results'][selection_state['current_index']]
+        count = len(selection_state['filtered_results'])
+        current_idx = selection_state['current_index'] + 1
+        
+        # Close existing viewer if open
+        if viewer_window_ref['window'] is not None:
+            try:
+                viewer_window_ref['window'].destroy()
+            except:
+                pass
+        
+        # Create new viewer window
+        from views.popups.base_popup import BasePopup
+        from views.plot_panel import PlotPanel
+        
+        viewer = BasePopup(window, f"Waveforms Seleccionados ({current_idx}/{count})", 900, 600)
+        viewer_window_ref['window'] = viewer
+        
+        # Create main frame
+        main_frame = ctk.CTkFrame(viewer)
+        main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        main_frame.grid_columnconfigure(0, weight=1)
+        main_frame.grid_rowconfigure(0, weight=1)
+        
+        # Create plot panel with proper arguments
+        def dummy_callback():
+            pass
+        
+        plot_panel = PlotPanel(
+            main_frame,
+            title="Selección",
+            color="#3498db",
+            on_next=lambda: nav_next(),
+            on_prev=lambda: nav_prev(),
+            on_show_info=None,
+            category="accepted"
+        )
+        plot_panel.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        
+        # Get results from parent (we need baseline, max_dist, etc.)
+        # For now, use dummy values - ideally these should come from the analysis
+        from controllers.analysis_controller import AnalysisController
+        
+        # Update plot with current waveform
+        def update_viewer_plot():
+            if not selection_state['filtered_results']:
+                return
+            
+            result = selection_state['filtered_results'][selection_state['current_index']]
+            idx = selection_state['current_index'] + 1
+            total = len(selection_state['filtered_results'])
+            
+            # Update window title
+            viewer.title(f"Waveforms Seleccionados ({idx}/{total}) - {result.filename}")
+            
+            # Get parameters from parent window
+            params = {
+                'negative_trigger_mv': -10.0  # Default value
+            }
+            
+            # Update plot (using dummy baseline values for now)
+            plot_panel.update_plot(
+                result=result,
+                global_min_amp=-0.035,
+                global_max_amp=0.130,
+                baseline_low=0.0,
+                baseline_high=0.010,
+                max_dist_low=-1.5e-6,
+                max_dist_high=-0.8e-6,
+                negative_trigger_mv=params['negative_trigger_mv']
+            )
+
+        
+        # Navigation functions
+        def nav_prev():
+            selection_state['current_index'] = (selection_state['current_index'] - 1) % count
+            update_viewer_plot()
+            
+        def nav_next():
+            selection_state['current_index'] = (selection_state['current_index'] + 1) % count
+            update_viewer_plot()
+            
+        # PlotPanel already has navigation buttons, no need for duplicates
+        # Just bind window close to clear selection
+        def on_viewer_close():
+            clear_selection()
+            viewer.destroy()
+        
+        
+        viewer.protocol("WM_DELETE_WINDOW", on_viewer_close)
+        
+        # Show first waveform
+        update_viewer_plot()
+    
+    # No UI elements needed - selection is handled by popup window
     
     # Info label
     info_label = ctk.CTkLabel(
