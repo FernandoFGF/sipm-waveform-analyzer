@@ -76,6 +76,7 @@ class AppController:
             old_trigger = config.TRIGGER_VOLTAGE
             old_num_points = config.NUM_POINTS
             old_sample_time = config.SAMPLE_TIME
+            original_data_dir = config.DATA_DIR
             
             # Update config using robust recalculation
             config.recalculate_config(dataset2_path)
@@ -91,7 +92,7 @@ class AppController:
                 'min_dist_time': 0.05e-6,
                 'baseline_pct': 85.0,
                 'max_dist_pct': 99.0,
-                'afterpulse_pct': 80.0
+                'negative_trigger_mv': config.DEFAULT_NEGATIVE_TRIGGER_MV
             }
             controller2.run_analysis(**params)
             
@@ -103,6 +104,7 @@ class AppController:
             config.TRIGGER_VOLTAGE = old_trigger
             config.NUM_POINTS = old_num_points
             config.SAMPLE_TIME = old_sample_time
+            config.DATA_DIR = original_data_dir
         
         # Show tabbed comparison window
         show_tabbed_comparison_window(
