@@ -6,6 +6,7 @@ from tkinter import filedialog
 from datetime import datetime
 import threading
 import queue
+import sys
 
 from config import (
     UI_THEME, UI_COLOR_THEME, MAIN_WINDOW_SIZE,
@@ -40,6 +41,7 @@ class MainWindow(ctk.CTk):
         self.grid_columnconfigure(2, weight=1)
         self.grid_rowconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
+        self.grid_rowconfigure(2, weight=0)  # Status bar row
         
         # Create sidebar
         self.sidebar = ControlSidebar(
@@ -123,6 +125,19 @@ class MainWindow(ctk.CTk):
             on_save_set=self.save_waveform_set
         )
         self.panel_favorites.grid(row=1, column=2, padx=5, pady=5, sticky="nsew")
+        
+        # Create status bar
+        self.status_label = ctk.CTkLabel(
+            self,
+            text="Ready",
+            font=ctk.CTkFont(family="Consolas", size=10),
+            anchor="w",
+            fg_color=("gray90", "gray20")
+        )
+        self.status_label.grid(row=2, column=0, columnspan=3, sticky="ew", padx=2, pady=2)
+        
+        # Redirect print to status bar
+        sys.stdout = PrintRedirector(self.update_status)
         
         # Create peak info panel (hidden by default)
         self.info_panel = PeakInfoPanel(self)
@@ -395,3 +410,27 @@ class MainWindow(ctk.CTk):
     def open_comparison_window(self):
         """Open comparison configuration and then tabbed comparison window."""
         self.app_controller.open_comparison_window()
+    
+    def update_status(self, message: str):
+        """Update status bar with message (thread-safe)."""
+        # Schedule update on main thread
+        self.after(0, lambda: self.status_label.configure(text=message))
+
+
+class PrintRedirector:
+    """Redirects print statements to both console and UI status bar."""
+    
+    def __init__(self, status_callback):
+        self.status_callback = status_callback
+        self.terminal = sys.__stdout__
+        
+    def write(self, message):
+        # Write to terminal
+        self.terminal.write(message)
+        
+        # Update status bar (only non-empty lines)
+        if message.strip():
+            self.status_callback(message.strip())
+    
+    def flush(self):
+        self.terminal.flush()

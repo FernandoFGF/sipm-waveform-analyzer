@@ -50,7 +50,7 @@ class ResultsCache:
             MD5 hash string as cache key
         """
         # Analysis version - increment this when analysis logic changes
-        ANALYSIS_VERSION = "2.1"  # Fixed: baseline no longer filters by trigger voltage
+        ANALYSIS_VERSION = "2.2"  # Added: parallel scaling calculation
         
         # Sort files for consistent hashing
         sorted_files = sorted([str(f) for f in files])
