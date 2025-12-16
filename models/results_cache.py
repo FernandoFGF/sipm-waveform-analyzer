@@ -49,6 +49,9 @@ class ResultsCache:
         Returns:
             MD5 hash string as cache key
         """
+        # Analysis version - increment this when analysis logic changes
+        ANALYSIS_VERSION = "2.1"  # Fixed: baseline no longer filters by trigger voltage
+        
         # Sort files for consistent hashing
         sorted_files = sorted([str(f) for f in files])
         
@@ -56,7 +59,7 @@ class ResultsCache:
         sorted_params = dict(sorted(params.items()))
         
         # Create combined string including data_dir to differentiate datasets
-        combined = str(data_dir) + str(sorted_files) + str(sorted_params)
+        combined = ANALYSIS_VERSION + str(data_dir) + str(sorted_files) + str(sorted_params)
         
         # Generate MD5 hash
         key = hashlib.md5(combined.encode()).hexdigest()

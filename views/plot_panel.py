@@ -46,6 +46,8 @@ class PlotPanel(ctk.CTkFrame):
         self.category = category
         self.on_save_set = on_save_set
         self.current_result = None  # Store current result for info display
+        self.zoom_level = 1.0
+        self.last_plot_params = None
         
         # Configure grid
         self.grid_rowconfigure(0, weight=1)
@@ -87,6 +89,23 @@ class PlotPanel(ctk.CTkFrame):
             command=self.on_next
         )
         btn_next.pack(side="left", padx=5)
+        
+        # Zoom controls
+        btn_zoom_out = ctk.CTkButton(
+            nav_frame,
+            text="- Zoom Y",
+            width=60,
+            command=self.on_zoom_out
+        )
+        btn_zoom_out.pack(side="left", padx=5)
+        
+        btn_zoom_in = ctk.CTkButton(
+            nav_frame,
+            text="+ Zoom Y",
+            width=60,
+            command=self.on_zoom_in
+        )
+        btn_zoom_in.pack(side="left", padx=5)
 
         # Setup context menu
         self._setup_context_menu()
@@ -165,6 +184,23 @@ class PlotPanel(ctk.CTkFrame):
         """Save complete set of waveforms for this category."""
         if self.on_save_set and self.category:
             self.on_save_set(self.category)
+
+    def on_zoom_in(self):
+        """Increase zoom level."""
+        self.zoom_level *= 1.2
+        self._refresh_plot()
+        
+    def on_zoom_out(self):
+        """Decrease zoom level."""
+        self.zoom_level /= 1.2
+        if self.zoom_level < 0.1:  # Prevent zooming out too much
+            self.zoom_level = 0.1
+        self._refresh_plot()
+        
+    def _refresh_plot(self):
+        """Refresh plot with current parameters (used for zooming)."""
+        if self.last_plot_params:
+            self.update_plot(**self.last_plot_params)
     
     
     def update_plot(
@@ -255,10 +291,37 @@ class PlotPanel(ctk.CTkFrame):
             if badge:
                 title = f"{result.filename}\n[{badge}]"
         
+        # Save params for refresh
+        self.last_plot_params = {
+            "result": result,
+            "global_min_amp": global_min_amp,
+            "global_max_amp": global_max_amp,
+            "baseline_low": baseline_low,
+            "baseline_high": baseline_high,
+            "max_dist_low": max_dist_low,
+            "max_dist_high": max_dist_high,
+            "negative_trigger_mv": negative_trigger_mv,
+            "original_category": original_category
+        }
+
         self.ax.set_title(title, fontsize=10)
         self.ax.set_xlabel('Tiempo (µs)')
         self.ax.set_ylabel('Amplitud (mV)')
-        self.ax.set_ylim(global_min_amp * 1000, global_max_amp * 1000)
+        
+        # Apply zoom to Y limits
+        # To keep 0 (baseline) at the same visual position relative to the window height,
+        # we scale both limits around 0.
+        y_min_global = global_min_amp * 1000
+        y_max_global = global_max_amp * 1000
+        
+        current_y_min = y_min_global / self.zoom_level
+        current_y_max = y_max_global / self.zoom_level
+        
+        self.ax.set_ylim(current_y_min, current_y_max)
+        
+        # Explicitly set X limits to full window
+        self.ax.set_xlim(-WINDOW_TIME/2 * 1e6, WINDOW_TIME/2 * 1e6)
+        
         self.ax.grid(True, alpha=0.3)
         
         # Store current result for info display

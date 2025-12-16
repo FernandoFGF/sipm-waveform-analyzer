@@ -72,47 +72,86 @@ class PeakAnalyzer:
                 min_dist_time
             )
         
-        # Collect global statistics from results
-        print("Collecting amplitude data for baseline calculation...")
-        all_data_list = []
-        
-        for wf_result in wf_results:
-            if wf_result is None:
-                continue
-            
-            all_data_list.append(wf_result.amplitudes)
-        
-        # Store full amplitude data for percentile calculations
-        # (min/max/times were already calculated during load_files)
-        if all_data_list:
-            self.waveform_data.all_amplitudes_flat = np.concatenate(all_data_list)
-        
-        # Calculate baseline range from all amplitudes (excluding points above trigger)
-        if len(self.waveform_data.all_amplitudes_flat) > 0:
-            from config import TRIGGER_VOLTAGE
-            
-            # Filter out points above trigger voltage (these are signal, not baseline)
-            baseline_amplitudes = self.waveform_data.all_amplitudes_flat[
-                self.waveform_data.all_amplitudes_flat <= TRIGGER_VOLTAGE
-            ]
-            
-            if len(baseline_amplitudes) > 0:
-                low_p = (100 - baseline_pct) / 2
-                high_p = 100 - low_p
-                results.baseline_low = np.percentile(baseline_amplitudes, low_p)
-                results.baseline_high = np.percentile(baseline_amplitudes, high_p)
-                print(f"Baseline ({baseline_pct}%, {len(baseline_amplitudes)} pts below trigger): "
-                      f"{results.baseline_low*1000:.2f}mV - {results.baseline_high*1000:.2f}mV")
-            else:
-                print("Warning: No amplitudes below trigger voltage for baseline calculation")
-        
-        # Calculate max dist range
+        # Calculate max dist range FIRST to define exclusion zone
         if len(self.waveform_data.all_max_times) > 0:
             low_p = (100 - max_dist_pct) / 2
             high_p = 100 - low_p
             results.max_dist_low = np.percentile(self.waveform_data.all_max_times, low_p)
             results.max_dist_high = np.percentile(self.waveform_data.all_max_times, high_p)
             print(f"Max Dist ({max_dist_pct}%): {results.max_dist_low*1e6:.2f}µs - {results.max_dist_high*1e6:.2f}µs")
+        else:
+            # Fallback if no peaks found
+            results.max_dist_low = -0.1e-6
+            results.max_dist_high = 0.1e-6
+
+        # Collect data for baseline calculation (EXCLUDING the Max Dist zone)
+        print("Collecting amplitude data for baseline calculation (excluding signal zone)...")
+        baseline_data_list = []
+        
+        # Calculate indices for exclusion zone
+        # t = index * SAMPLE_TIME - WINDOW_TIME/2
+        # index = (t + WINDOW_TIME/2) / SAMPLE_TIME
+        from config import SAMPLE_TIME, WINDOW_TIME
+        
+        idx_start = int((results.max_dist_low + WINDOW_TIME/2) / SAMPLE_TIME)
+        idx_end = int((results.max_dist_high + WINDOW_TIME/2) / SAMPLE_TIME)
+        
+        print(f"Excluding indices [{idx_start}, {idx_end}] from baseline calculation")
+        
+        for wf_result in wf_results:
+            if wf_result is None:
+                continue
+            
+            arr_len = len(wf_result.amplitudes)
+            
+            # Clamp indices to valid range
+            valid_idx_start = max(0, min(idx_start, arr_len))
+            valid_idx_end = max(0, min(idx_end, arr_len))
+            
+            # Concatenate pre-signal and post-signal regions
+            # Region 1: [0, valid_idx_start)
+            # Region 2: [valid_idx_end, arr_len)
+            
+            if valid_idx_start > 0:
+                baseline_data_list.append(wf_result.amplitudes[:valid_idx_start])
+            
+            if valid_idx_end < arr_len:
+                baseline_data_list.append(wf_result.amplitudes[valid_idx_end:])
+        
+        # Store for processing
+        if baseline_data_list:
+            baseline_amplitudes_flat = np.concatenate(baseline_data_list)
+        else:
+            baseline_amplitudes_flat = np.array([])
+            
+        # Also store full for other uses if needed, but critical is baseline calc
+        # For simplicity/memory, we might not strictly need 'all_amplitudes_flat' for anything else critical right now
+        # except maybe advanced analysis popup? Let's check. 
+        # The original code stored self.waveform_data.all_amplitudes_flat.
+        # Let's keep storing ALL data as well for compatibility, or just use the filtered one?
+        # The user specifically complained about the baseline calculation.
+        # "all_amplitudes_flat" implies ALL.
+        
+        # Construct full list for storage (memory intensive but consistent with previous code)
+        all_data_list = [res.amplitudes for res in wf_results if res is not None]
+        if all_data_list:
+            self.waveform_data.all_amplitudes_flat = np.concatenate(all_data_list)
+        
+        # Calculate baseline range from FILTERED amplitudes
+        if len(baseline_amplitudes_flat) > 0:
+            # No need to filter by trigger voltage - we already excluded the signal zone by time
+            # The remaining data is pure noise (pre-trigger and post-signal)
+            baseline_amplitudes = baseline_amplitudes_flat
+            
+            if len(baseline_amplitudes) > 0:
+                low_p = (100 - baseline_pct) / 2
+                high_p = 100 - low_p
+                results.baseline_low = np.percentile(baseline_amplitudes, low_p)
+                results.baseline_high = np.percentile(baseline_amplitudes, high_p)
+                print(f"Baseline ({baseline_pct}%, {len(baseline_amplitudes)} pts outside signal zone): "
+                      f"{results.baseline_low*1000:.2f}mV - {results.baseline_high*1000:.2f}mV")
+            else:
+                print("Warning: No amplitudes in quiet zone")
         
         # Now filter and classify results using calculated thresholds
         from config import SAMPLE_TIME, WINDOW_TIME
