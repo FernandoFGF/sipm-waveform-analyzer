@@ -89,7 +89,7 @@ scipy >= 1.7.0             # Procesamiento de señales
 
 ### 1. Clonar el Repositorio
 ```bash
-git clone <repository-url>
+git clone https://github.com/FernandoFGF/sipm-waveform-analyzer/
 cd analisis
 ```
 
